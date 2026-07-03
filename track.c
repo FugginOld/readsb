@@ -2064,24 +2064,6 @@ struct aircraft *trackUpdateFromMessage(struct modesMessage *mm) {
     unsigned int cpr_new = 0;
     mm->calculated_track = -1;
 
-    if (CHECK_APPROXIMATIONS) {
-        // great circle random testing stuff ...
-        for (int i = 0; i < 100; i++) {
-            double la1 = 2 * random() / (double) INT_MAX - 1;
-            double la2 = 2 * random() / (double) INT_MAX - 1;
-            double lo1 = 2 * random() / (double) INT_MAX - 1;
-            double lo2 = 2 * random() / (double) INT_MAX - 1;
-            la1 *= 90;
-            lo1 *= 180;
-            la2 = la1 + 90 * la2;
-            lo2 = lo1 + 90 * lo2;
-            if (greatcircle(la1, lo1, la2, lo2, 0)) {
-            }
-            if (bearing(la1, lo1, la2, lo2)) {
-            }
-        }
-    }
-
     mm->address_reliable = addressReliable(mm);
 
     // Lookup our aircraft or create a new one

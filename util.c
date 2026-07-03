@@ -612,11 +612,6 @@ double greatcircle(double lat0, double lon0, double lat1, double lon1, int appro
     double dlat = fabs(lat1 - lat0);
     double dlon = fabs(lon1 - lon0);
 
-    double hav = 0;
-    if (CHECK_APPROXIMATIONS) {
-        double a = sin(dlat / 2) * sin(dlat / 2) + cos(lat0) * cos(lat1) * sin(dlon / 2) * sin(dlon / 2);
-        hav = 6371e3 * 2 * atan2(sqrt(a), sqrt(1.0 - a));
-    }
     // after checking this isn't necessary with doubles
     // anyhow for small distance we can do a much cheaper approximation:
     // anyhow, nice formular let's leave it in the code for reference
@@ -656,13 +651,6 @@ double greatcircle(double lat0, double lon0, double lat1, double lon1, int appro
         float dequ = (float) dlon * mr * cosf(avglat);
         float pyth = sqrtf(dmer * dmer + dequ * dequ);
 
-        if (!approx && CHECK_APPROXIMATIONS) {
-            double errorPercent = fabs(hav - pyth) / hav * 100;
-            if (errorPercent > 0.25) {
-                fprintf(stderr, "pyth:  pos: %.1f, %.1f dlat: %.5f dlon %.5f hav: %.1f errorPercent: %.3f\n", toDeg(lat0), toDeg(lon0), toDeg(dlat), toDeg(dlon), hav, errorPercent);
-            }
-        }
-
         return pyth;
     }
 
@@ -671,23 +659,10 @@ double greatcircle(double lat0, double lon0, double lat1, double lon1, int appro
     if (dlat > 1 * DEGR && dlon > 1 * DEGR) {
         // error
         double slocf =  6371e3f * acosf(sinf(lat0) * sinf(lat1) + cosf(lat0) * cosf(lat1) * cosf(dlon));
-        if (CHECK_APPROXIMATIONS) {
-            double errorPercent = fabs(hav - slocf) / hav * 100;
-            if (errorPercent > 0.25) {
-                fprintf(stderr, "slocf: pos: %.1f, %.1f dlat: %.5f dlon %.5f hav: %.1f errorPercent: %.3f\n", toDeg(lat0), toDeg(lon0), toDeg(dlat), toDeg(dlon), hav, errorPercent);
-            }
-        }
         return slocf;
     }
 
     double sloc =  6371e3 * acos(sin(lat0) * sin(lat1) + cos(lat0) * cos(lat1) * cos(dlon));
-
-    if (CHECK_APPROXIMATIONS) {
-        double errorPercent = fabs(hav - sloc) / hav * 100;
-        if (errorPercent > 0.25) {
-            fprintf(stderr, "sloc:  pos: %.1f, %.1f dlat: %.5f dlon %.5f sloc: %.1f errorPercent: %.3f\n", toDeg(lat0), toDeg(lon0), toDeg(dlat), toDeg(dlon), sloc, errorPercent);
-        }
-    }
 
     return sloc;
 }
@@ -702,20 +677,6 @@ double bearing(double lat0, double lon0, double lat1, double lon1) {
     float x = cosf(lat0)*sinf(lat1) - sinf(lat0)*cosf(lat1)*cosf(lon1-lon0);
     float res = toDegf(atan2f(y, x)) + 360.0f;
 
-    if (CHECK_APPROXIMATIONS) {
-        // check against using double trigonometric functions
-        // errors greater than 0.5 are rare and only happen for small distances
-        // bearings derived from small distances don't need to be accurate at all for our purposes
-        double y = sin(lon1-lon0)*cos(lat1);
-        double x = cos(lat0)*sin(lat1) - sin(lat0)*cos(lat1)*cos(lon1-lon0);
-        double res2 = (atan2(y, x) * (180 / M_PI) + 360);
-        double diff = fabs(res2 - res);
-        double dist = greatcircle(toDeg(lat0), toDeg(lon0), toDeg(lat1), toDeg(lon1), 1);
-        if ((diff > 0.3 && dist > 150) || (diff > 2 && dist > 10)) {
-            fprintf(stderr, "errorDeg: %.2f %.2f %.2f dist: %.3f km\n",
-                    diff, res, res2, dist / 1000.0);
-        }
-    }
     while (res > 360)
         res -= 360;
     return res;
@@ -1179,14 +1140,9 @@ int32_t tokenize(char **restrict stringp, char *restrict delim, char **restrict 
 
 void spinLock(volatile atomic_int *lock) {
     atomic_int expected;
-    int calls = 0;
     do {
         expected = 0;
-        calls++;
     } while (!atomic_compare_exchange_weak(lock, &expected, 1));
-    if (0 && calls > 1000) {
-        fprintf(stderr, "cas_weak calls %5d %8ld\n", calls, (long) pthread_self());
-    }
 }
 void spinRelease(volatile atomic_int *lock) {
     atomic_store(lock, 0);

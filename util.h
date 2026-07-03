@@ -24,16 +24,12 @@
 #ifndef DUMP1090_UTIL_H
 #define DUMP1090_UTIL_H
 
-#define CHECK_APPROXIMATIONS (0)
-
 #define GZBUFFER_BIG (512 * 1024)
 
 #include <stdint.h>
 #include <stdatomic.h>
 
 #define sfree(x) do { free(x); x = NULL; } while (0)
-
-#define debugpl do { fprintf(stderr, "debugpl: %s %d\n",  __FILE__, __LINE__); } while (0)
 
 #define HOURS (60*60*1000LL)
 #define MINUTES (60*1000LL)

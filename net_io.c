@@ -5034,14 +5034,6 @@ static int readPlanefinder(struct client *c, int64_t now, struct messageBuffer *
             return 0;
         }
 
-#if 0
-        fprintf(stderr, "Message found from 0x%p to 0x%p: ", c->som, end);
-        for (char * byte = start; byte<=end; byte++) {
-            fprintf(stderr, "%02x", (unsigned char)*byte & 0xFF);
-        }
-        fprintf(stderr, "\n");
-#endif
-
         // Next time we loop through this, start from the next message
         c->som = end+1;
 
