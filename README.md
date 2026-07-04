@@ -71,7 +71,7 @@ sudo apt update
 sudo apt install --no-install-recommends --no-install-suggests -y \
     git build-essential debhelper libusb-1.0-0-dev pkg-config fakeroot \
     libncurses-dev zlib1g-dev libzstd-dev librtlsdr-dev help2man
-git clone --depth 20 https://github.com/wiedehopf/readsb.git
+git clone --depth 20 https://github.com/FugginOld/readsb.git
 cd readsb
 export DEB_BUILD_OPTIONS=noddebs
 rm -f ../readsb_*.deb
