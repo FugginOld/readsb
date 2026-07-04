@@ -1820,6 +1820,7 @@ static stateChunk *resizeTraceChunks(struct aircraft *a, int newLen) {
     a->traceHistory->trace_chunk_len = newLen;
     if (newLen == 0) {
         sfree(a->traceHistory->trace_chunks);
+        a->traceHistory->trace_chunks = NULL;
         return NULL;
     }
     if (oldLen == newLen) {
@@ -1862,6 +1863,7 @@ static stateChunk *resizeTraceChunks(struct aircraft *a, int newLen) {
     }
 
     sfree(a->traceHistory->trace_chunks);
+    a->traceHistory->trace_chunks = NULL;
 
     a->traceHistory->trace_chunks = new;
 
