@@ -1,0 +1,27 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - "dev"
+  pull_request:
+    branches:
+      - "dev"
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libncurses-dev zlib1g-dev pkg-config libzstd-dev libusb-1.0-0-dev
+
+      - name: Build
+        run: make
+
+      - name: Test
+        run: make test
