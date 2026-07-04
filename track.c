@@ -3225,7 +3225,7 @@ void trackRemoveStale(int64_t now) {
         readsb_task_t *range = &infos[i];
 
         range->now = now;
-        range->from = i * section_len + imin(extra, i);
+        range->from = (int64_t) i * section_len + imin(extra, i);
         range->to = range->from + section_len + (i < extra ? 1 : 0);
 
         if (range->to > ca->len || (i == taskCount - 1 && range->to != ca->len)) {
@@ -3270,7 +3270,7 @@ void trackRemoveStale(int64_t now) {
 
         range->now = now;
 
-        range->from = part * section_len + imin(extra, part);
+        range->from = (int64_t) part * section_len + imin(extra, part);
         range->to = range->from + section_len + (part < extra ? 1 : 0);
 
         if (range->to > Modes.acBuckets || (part == n_parts - 1 && range->to != Modes.acBuckets)) {

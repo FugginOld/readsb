@@ -393,7 +393,7 @@ static void *handle_bladerf_samples(struct bladerf *dev,
         outbuf->length += samples_per_block;
         outbuf->mean_level += mean_level;
         outbuf->mean_power += mean_power;
-        nextTimestamp += samples_per_block * BladeRF.decimation;
+        nextTimestamp += (uint64_t) samples_per_block * BladeRF.decimation;
         ++blocks_processed;
         timeouts = 0;
     }

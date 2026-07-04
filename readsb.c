@@ -974,7 +974,7 @@ static void timingStatistics(struct mag_buf *buf) {
             if (fabs(ppm) > 600) {
                 if (ppm < -1000) {
                     int packets_lost = (int) nearbyint(ppm / -1820);
-                    Modes.stats_current.samples_lost += packets_lost * SdrConfig.sdr_buf_samples;
+                    Modes.stats_current.samples_lost += (uint64_t) packets_lost * SdrConfig.sdr_buf_samples;
                     fprintf(stderr, "Lost %d packets (%.1f us) on USB, MLAT could be UNSTABLE, check sync! (ppm: %.0f)"
                             "(or the system clock jumped for some reason)\n", packets_lost, diff_us, ppm);
                 } else {
@@ -1226,7 +1226,7 @@ static void writeTraces(int64_t mono) {
             threadpool_task_t *task = &tasks[i];
             readsb_task_t *range = &infos[i];
 
-            int thread_start = part * thread_section_len + imin(extra, part);
+            int thread_start = (int64_t) part * thread_section_len + imin(extra, part);
             int thread_end = thread_start + thread_section_len + (part < extra ? 1 : 0);
 
             part++;

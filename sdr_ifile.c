@@ -148,7 +148,7 @@ bool ifileOpen(void) {
             return false;
     }
 
-    if (!(ifile.readbuf = cmalloc(SdrConfig.sdr_buf_samples * ifile.bytes_per_sample))) {
+    if (!(ifile.readbuf = cmalloc((size_t) SdrConfig.sdr_buf_samples * ifile.bytes_per_sample))) {
         fprintf(stderr, "ifile: failed to allocate read buffer\n");
         ifileClose();
         return false;
@@ -219,7 +219,7 @@ void ifileRun() {
 
         //fprintf(stderr, "sysTimestamp %.3f\n", outbuf->sysTimestamp / 1000.0);
 
-        toread = SdrConfig.sdr_buf_samples * ifile.bytes_per_sample;
+        toread = (ssize_t) SdrConfig.sdr_buf_samples * ifile.bytes_per_sample;
         r = ifile.readbuf;
         while (toread) {
             nread = read(ifile.fd, r, toread);

@@ -1084,7 +1084,7 @@ void dump_beast_check(int64_t now) {
     int startup = (Modes.dump_beast_index < 0);
     Modes.dump_beast_index = index;
 
-    time_t nowish = index * Modes.dump_interval;
+    time_t nowish = (time_t) index * Modes.dump_interval;
     struct tm utc;
     gmtime_r(&nowish, &utc);
 
