@@ -8,6 +8,51 @@ static void mark_legs(traceBuffer tb, struct aircraft *a, int start, int recent)
 static traceBuffer reassembleTrace(struct aircraft *a, int numPoints, int64_t after_timestamp, threadpool_buffer_t *buffer);
 static void resizeTraceCurrent(struct aircraft *a, int64_t now, int extra, int force);
 
+// compressed trace chunks + disk-persistence bookkeeping.
+// private to this file -- struct aircraft only holds an opaque pointer to it.
+struct traceHistory {
+    stateChunk *trace_chunks; // compressed chunks of trace
+    int32_t trace_chunk_len; // how many stateChunks are saved for this aircraft
+    uint32_t trace_chunk_overall_bytes;
+    int64_t trace_next_mw; // timestamp for next full trace write to /run (tmpfs)
+    int64_t trace_next_perm; // timestamp for next trace write to history_dir (disk)
+    int64_t trace_perm_last_timestamp; // timestamp for last trace point written to disk
+};
+
+struct traceHistory *traceHistoryCreate(void) {
+    return cmCalloc(sizeof(struct traceHistory));
+}
+
+void traceHistoryDestroy(struct traceHistory *th) {
+    if (!th)
+        return;
+    sfree(th->trace_chunks);
+    sfree(th);
+}
+
+uint32_t traceChunkBytes(const struct aircraft *a) {
+    return a->traceHistory->trace_chunk_overall_bytes;
+}
+
+// does the recent (uncompressed) trace tail already contain this lat/lon?
+// used to avoid re-adding duplicate JAERO positions.
+int traceHasRecentDuplicate(struct aircraft *a, int32_t lat, int32_t lon) {
+    if (a->trace_len == 0)
+        return 0;
+
+    int found = 0;
+    spinLock(&a->traceLock);
+    for (int i = imax(0, a->trace_current_len - 10); i < a->trace_current_len; i++) {
+        struct state *s = getState(a->trace_current, i);
+        if (lat == s->lat && lon == s->lon) {
+            found = 1;
+            break;
+        }
+    }
+    spinRelease(&a->traceLock);
+    return found;
+}
+
 void init_globe_index() {
     struct tile *s_tiles = Modes.json_globe_special_tiles = cmalloc(GLOBE_SPECIAL_INDEX * sizeof(struct tile));
     memset(s_tiles, 0, GLOBE_SPECIAL_INDEX * sizeof(struct tile));
@@ -453,7 +498,7 @@ static void createDateDir(char *base_dir, struct tm *utc, char *dateDir) {
 }
 
 static void scheduleMemBothWrite(struct aircraft *a, int64_t schedTime) {
-    a->trace_next_mw = schedTime;
+    a->traceHistory->trace_next_mw = schedTime;
     a->trace_writeCounter = 0xc0ffee;
 }
 
@@ -557,7 +602,7 @@ static int writeFull(struct aircraft *a, traceBuffer tb, threadpool_buffer_t *ge
     if (a->trace_writeCounter >= 0xc0ffee) {
         // avoid CPU spikes by randomizing next full trace writes on startup
         int64_t ival = random() % (GLOBE_MEM_IVAL * 9 / 8);
-        a->trace_next_mw = now + fullIvalAdjust(now - a->seenPosReliable, ival);
+        a->traceHistory->trace_next_mw = now + fullIvalAdjust(now - a->seenPosReliable, ival);
         if (now - a->seenPosReliable < 5 * MINUTES) {
             // only set this for active aircraft, not necessary for inactive ones
             a->trace_writeCounter = random() % memThreshold;
@@ -566,7 +611,7 @@ static int writeFull(struct aircraft *a, traceBuffer tb, threadpool_buffer_t *ge
         }
     } else {
         int64_t ival = GLOBE_MEM_IVAL + random() % (GLOBE_MEM_IVAL / 8);
-        a->trace_next_mw = now + fullIvalAdjust(now - a->seenPosReliable, ival);
+        a->traceHistory->trace_next_mw = now + fullIvalAdjust(now - a->seenPosReliable, ival);
         a->trace_writeCounter = 0;
     }
 
@@ -618,7 +663,7 @@ static int writePerm(struct aircraft *a, traceBuffer tb, threadpool_buffer_t *ge
     }
 
     // only write permanent trace if we haven't already written up to the last timestamp
-    if (a->trace_perm_last_timestamp == endStamp) {
+    if (a->traceHistory->trace_perm_last_timestamp == endStamp) {
         goto perm_done;
     }
     // don't write permanent trace for non icao traces that are on the ground
@@ -670,7 +715,7 @@ static int writePerm(struct aircraft *a, traceBuffer tb, threadpool_buffer_t *ge
 
 perm_done:
     // note what we have written to disk
-    a->trace_perm_last_timestamp = endStamp;
+    a->traceHistory->trace_perm_last_timestamp = endStamp;
     a->traceWrittenForYesterday = Modes.triggerPermWriteDay;
     return permWritten;
 }
@@ -711,8 +756,8 @@ void traceWrite(struct aircraft *a, threadpool_threadbuffers_t *buffer_group) {
         if (Modes.trace_hist_only & 8) {
             hist_only_mask = WPERM;
             if (Modes.trace_hist_only == 10) {
-                if (a->trace_writeCounter > 0 && now > a->trace_next_mw) {
-                    a->trace_next_mw = now + 5 * MINUTES;
+                if (a->trace_writeCounter > 0 && now > a->traceHistory->trace_next_mw) {
+                    a->traceHistory->trace_next_mw = now + 5 * MINUTES;
                     trace_write |= WRECENT;
                     hist_only_mask |= WRECENT;
                     a->trace_writeCounter = 0;
@@ -723,7 +768,7 @@ void traceWrite(struct aircraft *a, threadpool_threadbuffers_t *buffer_group) {
                     a->trace_writeCounter = 0;
                 }
             }
-            if (now > a->trace_next_mw) {
+            if (now > a->traceHistory->trace_next_mw) {
                 hist_only_mask |= WMEM;
             }
         }
@@ -737,7 +782,7 @@ void traceWrite(struct aircraft *a, threadpool_threadbuffers_t *buffer_group) {
         trace_write &= hist_only_mask;
     }
 
-    if ((trace_write & WPERM) && a->trace_perm_last_timestamp == getState(a->trace_current, a->trace_current_len - 1)->timestamp) {
+    if ((trace_write & WPERM) && a->traceHistory->trace_perm_last_timestamp == getState(a->trace_current, a->trace_current_len - 1)->timestamp) {
         trace_write &= ~WPERM;
         a->traceWrittenForYesterday = Modes.triggerPermWriteDay;
     }
@@ -796,8 +841,8 @@ void traceWrite(struct aircraft *a, threadpool_threadbuffers_t *buffer_group) {
 
     if (trace_write && a->addr == TRACE_FOCUS)
         fprintf(stderr, "mw: %.0f, perm: %.0f, count: %d %x\n",
-                ((int64_t) a->trace_next_mw - (int64_t) now) / 1000.0,
-                ((int64_t) a->trace_next_perm - (int64_t) now) / 1000.0,
+                ((int64_t) a->traceHistory->trace_next_mw - (int64_t) now) / 1000.0,
+                ((int64_t) a->traceHistory->trace_next_perm - (int64_t) now) / 1000.0,
                 a->trace_writeCounter, a->trace_writeCounter);
 
     int memWritten = 0;
@@ -855,8 +900,8 @@ void traceWrite(struct aircraft *a, threadpool_threadbuffers_t *buffer_group) {
             if (print) {
                 fprintf(stderr, " hex: %06x mw: %6.0f, perm: %6.0f, count: %4d / %4d (%4x) \n",
                         a->addr,
-                        ((int64_t) a->trace_next_mw - (int64_t) now) / 1000.0,
-                        ((int64_t) a->trace_next_perm - (int64_t) now) / 1000.0,
+                        ((int64_t) a->traceHistory->trace_next_mw - (int64_t) now) / 1000.0,
+                        ((int64_t) a->traceHistory->trace_next_perm - (int64_t) now) / 1000.0,
                         a->trace_writeCounter,
                         recent_points,
                         a->trace_writeCounter);
@@ -867,8 +912,8 @@ void traceWrite(struct aircraft *a, threadpool_threadbuffers_t *buffer_group) {
 
     if (0 && a->addr == TRACE_FOCUS)
         fprintf(stderr, "mw: %.0f, perm: %.0f, count: %d\n",
-                ((int64_t) a->trace_next_mw - (int64_t) now) / 1000.0,
-                ((int64_t) a->trace_next_perm - (int64_t) now) / 1000.0,
+                ((int64_t) a->traceHistory->trace_next_mw - (int64_t) now) / 1000.0,
+                ((int64_t) a->traceHistory->trace_next_perm - (int64_t) now) / 1000.0,
                 a->trace_writeCounter);
 
 }
@@ -965,11 +1010,13 @@ static int load_aircraft(char **p, char *end, int64_t now, threadpool_buffer_t *
     }
 
     struct aircraft *preserveNext = a->next;
+    struct traceHistory *preserveTraceHistory = a->traceHistory;
 
     memcpy(a, *p, imin(oldSize, newSize));
     *p += oldSize;
 
     a->next = preserveNext;
+    a->traceHistory = preserveTraceHistory;
 
     if (!size_changed && oldSize != newSize) {
         size_changed = 1;
@@ -980,7 +1027,7 @@ static int load_aircraft(char **p, char *end, int64_t now, threadpool_buffer_t *
 
     // if we are loading this data via the replace_state mechanism, make sure we write the permanent trace again
     if (Modes.replace_state_blob) {
-        a->trace_perm_last_timestamp = 0;
+        a->traceHistory->trace_perm_last_timestamp = 0;
     }
 
     aircraftZeroTail(a);
@@ -1024,11 +1071,11 @@ static int load_aircraft(char **p, char *end, int64_t now, threadpool_buffer_t *
     // set trace pointers to zero before loading the trace
     a->trace_current_max = 0;
     a->trace_current = NULL;
-    a->trace_chunks = NULL;
+    a->traceHistory->trace_chunks = NULL;
     a->traceLast = NULL;
 
     // recalculate overall trace chunk size
-    a->trace_chunk_overall_bytes = 0;
+    a->traceHistory->trace_chunk_overall_bytes = 0;
 
     int discard_trace = 0;
 
@@ -1051,27 +1098,27 @@ static int load_aircraft(char **p, char *end, int64_t now, threadpool_buffer_t *
         int checkNo = 0;
 #define checkSize(size) if (++checkNo && ((end - *p < (ssize_t) size) || size < 0)) { fprintf(stderr, "loadAircraft: checkSize failed for hex %06x checkNo %d size %lld\n", a->addr, checkNo, (long long) size); traceCleanupNoUnlink(a); goto err; }
 
-        if (a->trace_chunk_len > 0) {
-            a->trace_chunks = cmalloc(a->trace_chunk_len * sizeof(stateChunk));
+        if (a->traceHistory->trace_chunk_len > 0) {
+            a->traceHistory->trace_chunks = cmalloc(a->traceHistory->trace_chunk_len * sizeof(stateChunk));
         } else {
-            a->trace_chunk_len = 0;
+            a->traceHistory->trace_chunk_len = 0;
         }
         // presumed trace_chunk_len, in case we error and call traceCleanup we just pretend there
         // are no chunks, this leaks some memory and prevents segfaults for badly corrupted state
         // loading
-        int trace_chunk_len = a->trace_chunk_len;
-        a->trace_chunk_len = 0;
+        int trace_chunk_len = a->traceHistory->trace_chunk_len;
+        a->traceHistory->trace_chunk_len = 0;
         for (int k = 0; k < trace_chunk_len; k++) {
-            stateChunk *chunk = &a->trace_chunks[k];
+            stateChunk *chunk = &a->traceHistory->trace_chunks[k];
             checkSize(sizeof(stateChunk));
             *p += memcpySize(chunk, *p, sizeof(stateChunk));
 
             chunk->compressed = NULL;
-            a->trace_chunk_len++;
+            a->traceHistory->trace_chunk_len++;
 
             checkSize(chunk->compressed_size);
             chunk->compressed = cmalloc(chunk->compressed_size);
-            a->trace_chunk_overall_bytes += chunk->compressed_size;
+            a->traceHistory->trace_chunk_overall_bytes += chunk->compressed_size;
             *p += memcpySize(chunk->compressed, *p, chunk->compressed_size);
 
             ssize_t padBytes = roundUp8(chunk->compressed_size) - chunk->compressed_size;
@@ -1111,7 +1158,7 @@ static int load_aircraft(char **p, char *end, int64_t now, threadpool_buffer_t *
         traceMaintenance(a, now, passbuffer);
 
         if (a->addr == Modes.leg_focus) {
-            a->trace_next_perm = now;
+            a->traceHistory->trace_next_perm = now;
             scheduleMemBothWrite(a, now);
             fprintf(stderr, "leg_focus: %06x trace len: %d\n", a->addr, a->trace_len);
             a->trace_write |= (WRECENT | WPERM | WMEM);
@@ -1759,20 +1806,20 @@ static void traceUnlink(struct aircraft *a) {
 }
 
 static stateChunk *resizeTraceChunks(struct aircraft *a, int newLen) {
-    int oldLen = a->trace_chunk_len;
+    int oldLen = a->traceHistory->trace_chunk_len;
 
     if (oldLen < 0 || newLen < 0) {
         fprintf(stderr, "resizeTraceChunks: oldLen < 0 || newLen < 0 ... this is a fatal error, exiting.\n");
         exit(1);
     }
-    if (oldLen > 0 && !a->trace_chunks) {
-        fprintf(stderr, "resizeTraceChunks: oldLen > 0 && !a->trace_chunks ... this is a fatal error, exiting.\n");
+    if (oldLen > 0 && !a->traceHistory->trace_chunks) {
+        fprintf(stderr, "resizeTraceChunks: oldLen > 0 && !a->traceHistory->trace_chunks ... this is a fatal error, exiting.\n");
         exit(1);
     }
 
-    a->trace_chunk_len = newLen;
+    a->traceHistory->trace_chunk_len = newLen;
     if (newLen == 0) {
-        sfree(a->trace_chunks);
+        sfree(a->traceHistory->trace_chunks);
         return NULL;
     }
     if (oldLen == newLen) {
@@ -1800,7 +1847,7 @@ static stateChunk *resizeTraceChunks(struct aircraft *a, int newLen) {
             exit(1);
         }
 
-        memcpy(new, a->trace_chunks + shrinkByLen, newBytes);
+        memcpy(new, a->traceHistory->trace_chunks + shrinkByLen, newBytes);
     } else {
         int growByBytes = newBytes - oldBytes;
         if (growByBytes < 0) {
@@ -1808,18 +1855,18 @@ static stateChunk *resizeTraceChunks(struct aircraft *a, int newLen) {
             exit(1);
         }
 
-        memcpy(new, a->trace_chunks, oldBytes);
+        memcpy(new, a->traceHistory->trace_chunks, oldBytes);
         if (growByBytes > 0) {
             memset(new + oldLen, 0x0, growByBytes);
         }
     }
 
-    sfree(a->trace_chunks);
+    sfree(a->traceHistory->trace_chunks);
 
-    a->trace_chunks = new;
+    a->traceHistory->trace_chunks = new;
 
     if (newLen > oldLen) {
-        return &a->trace_chunks[a->trace_chunk_len - 1];
+        return &a->traceHistory->trace_chunks[a->traceHistory->trace_chunk_len - 1];
     } else {
         return NULL;
     }
@@ -1840,15 +1887,15 @@ static void tracePrune(struct aircraft *a, int64_t now) {
 
     int deletedChunks = 0;
 
-    for (int k = 0; k < a->trace_chunk_len; k++) {
-        stateChunk *chunk = &a->trace_chunks[k];
+    for (int k = 0; k < a->traceHistory->trace_chunk_len; k++) {
+        stateChunk *chunk = &a->traceHistory->trace_chunks[k];
         if (chunk->lastTimestamp >= keep_after) {
             break;
         }
 
         deletedChunks++;
         a->trace_len -= chunk->numStates;
-        a->trace_chunk_overall_bytes -= chunk->compressed_size;
+        a->traceHistory->trace_chunk_overall_bytes -= chunk->compressed_size;
 
         sfree(chunk->compressed);
     }
@@ -1857,7 +1904,7 @@ static void tracePrune(struct aircraft *a, int64_t now) {
         if (0 && Modes.verbose) {
             fprintf(stderr, "%06x deleting %d chunks\n", a->addr, deletedChunks);
         }
-        resizeTraceChunks(a, a->trace_chunk_len - deletedChunks);
+        resizeTraceChunks(a, a->traceHistory->trace_chunk_len - deletedChunks);
     }
 
     int deleteFs = 0;
@@ -1905,14 +1952,14 @@ static void destroyTraceCache(struct traceCache *cache) {
 
 
 void traceCleanupNoUnlink(struct aircraft *a) {
-    if (a->trace_chunks) {
-        for (int k = 0; k < a->trace_chunk_len; k++) {
-            sfree(a->trace_chunks[k].compressed);
+    if (a->traceHistory->trace_chunks) {
+        for (int k = 0; k < a->traceHistory->trace_chunk_len; k++) {
+            sfree(a->traceHistory->trace_chunks[k].compressed);
         }
     }
-    sfree(a->trace_chunks);
-    a->trace_chunk_len = 0;
-    a->trace_chunk_overall_bytes = 0;
+    sfree(a->traceHistory->trace_chunks);
+    a->traceHistory->trace_chunk_len = 0;
+    a->traceHistory->trace_chunk_overall_bytes = 0;
 
     sfree(a->trace_current);
     a->trace_current_max = 0;
@@ -1945,16 +1992,16 @@ static traceBuffer reassembleTrace(struct aircraft *a, int numPoints, int64_t af
     int allocLen = currentLen;
 
     if (numPoints >= 0) {
-        firstChunk = a->trace_chunk_len;
-        for (int k = a->trace_chunk_len - 1; k >= 0 && allocLen < numPoints; k--) {
-            stateChunk *chunk = &a->trace_chunks[k];
+        firstChunk = a->traceHistory->trace_chunk_len;
+        for (int k = a->traceHistory->trace_chunk_len - 1; k >= 0 && allocLen < numPoints; k--) {
+            stateChunk *chunk = &a->traceHistory->trace_chunks[k];
             allocLen += chunk->numStates;
             firstChunk = k;
         }
     } else if (after_timestamp > 0) {
-        firstChunk = a->trace_chunk_len;
-        for (int k = a->trace_chunk_len - 1; k >= 0; k--) {
-            stateChunk *chunk = &a->trace_chunks[k];
+        firstChunk = a->traceHistory->trace_chunk_len;
+        for (int k = a->traceHistory->trace_chunk_len - 1; k >= 0; k--) {
+            stateChunk *chunk = &a->traceHistory->trace_chunks[k];
             if (after_timestamp > chunk->lastTimestamp) {
                 break;
             }
@@ -1962,8 +2009,8 @@ static traceBuffer reassembleTrace(struct aircraft *a, int numPoints, int64_t af
             firstChunk = k;
         }
     } else {
-        for (int k = 0; k < a->trace_chunk_len; k++) {
-            stateChunk *chunk = &a->trace_chunks[k];
+        for (int k = 0; k < a->traceHistory->trace_chunk_len; k++) {
+            stateChunk *chunk = &a->traceHistory->trace_chunks[k];
             allocLen += chunk->numStates;
         }
     }
@@ -1977,8 +2024,8 @@ static traceBuffer reassembleTrace(struct aircraft *a, int numPoints, int64_t af
 
 
     int actual_len = 0;
-    for (int k = firstChunk; k < a->trace_chunk_len; k++) {
-        stateChunk *chunk = &a->trace_chunks[k];
+    for (int k = firstChunk; k < a->traceHistory->trace_chunk_len; k++) {
+        stateChunk *chunk = &a->traceHistory->trace_chunks[k];
         actual_len += chunk->numStates;
         if (actual_len > allocLen) { fprintf(stderr, "remakeTrace buffer overflow, bailing eex5ioBu\n"); exit(1); }
 
@@ -2098,7 +2145,7 @@ static float recompressStateChunk(struct aircraft *a, struct stateChunk *chunk, 
                 recompressSavings * 100.0f,
                 oldSize,
                 newSize,
-                a->trace_chunk_len,
+                a->traceHistory->trace_chunk_len,
                 (double) (tOld - tNew) / tOld * 100.0);
 
         pthread_mutex_unlock(&Modes.traceDebugMutex);
@@ -2137,8 +2184,8 @@ static int compressChunk(fourState *source, int pointCount, threadpool_buffer_t 
 
     int extending = 0;
 
-    if (a->trace_chunk_len > 0) {
-        lastChunk = &a->trace_chunks[a->trace_chunk_len - 1];
+    if (a->traceHistory->trace_chunk_len > 0) {
+        lastChunk = &a->traceHistory->trace_chunks[a->traceHistory->trace_chunk_len - 1];
         int64_t refTs = lastChunk->firstTimestamp;
 
         int k = 0;
@@ -2201,7 +2248,7 @@ static int compressChunk(fourState *source, int pointCount, threadpool_buffer_t 
         // add to existing chunk
 
         // do some bookkeeping, we add the compressed size of the newly compressed chunk back to it
-        a->trace_chunk_overall_bytes -= lastChunk->compressed_size;
+        a->traceHistory->trace_chunk_overall_bytes -= lastChunk->compressed_size;
 
         // tell rest of the code to write new details into existing stateChunk struct
         target = lastChunk;
@@ -2220,7 +2267,7 @@ static int compressChunk(fourState *source, int pointCount, threadpool_buffer_t 
 
         // make new chunk
         a->chunkRecompressed = 0;
-        target = resizeTraceChunks(a, a->trace_chunk_len + 1);
+        target = resizeTraceChunks(a, a->traceHistory->trace_chunk_len + 1);
 
         if (!target) {
             fprintf(stderr, "%06x compressChunk error, resizeTraceChunks returned NULL, treat this as fatal and exit.\n", a->addr);
@@ -2301,7 +2348,7 @@ static int compressChunk(fourState *source, int pointCount, threadpool_buffer_t 
     target->compressed = cmalloc(target->compressed_size);
     memcpy(target->compressed, passbuffer->buf, target->compressed_size);
 
-    a->trace_chunk_overall_bytes += target->compressed_size;
+    a->traceHistory->trace_chunk_overall_bytes += target->compressed_size;
 
 
     if (0) {
@@ -2470,7 +2517,7 @@ void traceMaintenance(struct aircraft *a, int64_t now, threadpool_buffer_t *pass
                 && a->traceWrittenForYesterday != Modes.triggerPermWriteDay
                 );
         int64_t permCheckIval = GLOBE_PERM_IVAL;
-        if (now > a->trace_next_perm) {
+        if (now > a->traceHistory->trace_next_perm) {
             // wait until end of the day and aircraft is inactive to write permanent trace
             // then once the day is over make sure it's written out
 
@@ -2483,15 +2530,15 @@ void traceMaintenance(struct aircraft *a, int64_t now, threadpool_buffer_t *pass
             int condition = 0;
             if (triggerActive) {
                 a->trace_write |= WPERM;
-                a->trace_next_perm = now + 18 * HOURS + random() % permCheckIval;
+                a->traceHistory->trace_next_perm = now + 18 * HOURS + random() % permCheckIval;
                 condition = 1;
             } else if (posElapsed > 15 * MINUTES && posElapsed > 6 * (toTrigger - 10 * MINUTES)) {
                 a->trace_write |= WPERM;
-                a->trace_next_perm = now + 1 * HOURS;
+                a->traceHistory->trace_next_perm = now + 1 * HOURS;
                 condition = 2;
             } else {
                 // reschedule
-                a->trace_next_perm = now + permCheckIval / 2 + (random() % permCheckIval / 2);
+                a->traceHistory->trace_next_perm = now + permCheckIval / 2 + (random() % permCheckIval / 2);
             }
             if (0 && condition) {
                 fprintf(stderr, "|= WPERM %d %06x posElapsed %4.1fh toTrigger %4.1fh %d %d %d\n",
@@ -2500,16 +2547,16 @@ void traceMaintenance(struct aircraft *a, int64_t now, threadpool_buffer_t *pass
             }
 
         }
-        if (now > a->trace_next_mw) {
+        if (now > a->traceHistory->trace_next_mw) {
             a->trace_write |= WMEM;
         }
         // on day change write out the traces for yesterday
         // for which day and which time span is written is determined by traceday
-        if (triggerActive && a->trace_next_perm > now + permCheckIval) {
+        if (triggerActive && a->traceHistory->trace_next_perm > now + permCheckIval) {
             if (a->addr == TRACE_FOCUS) {
                 fprintf(stderr, "schedule_perm\n");
             }
-            a->trace_next_perm = now + random() % permCheckIval;
+            a->traceHistory->trace_next_perm = now + random() % permCheckIval;
         }
     }
 
@@ -2536,18 +2583,18 @@ void traceMaintenance(struct aircraft *a, int64_t now, threadpool_buffer_t *pass
             // regularly reallocate certain buffers to reduce fragmentation due to very long lived
             // allocations
             resizeTraceCurrent(a, now, 0, 1);
-            if (a->trace_chunk_len > 0) {
-                resizeTraceChunks(a, a->trace_chunk_len);
+            if (a->traceHistory->trace_chunk_len > 0) {
+                resizeTraceChunks(a, a->traceHistory->trace_chunk_len);
             }
             destroyTraceCache(&a->traceCache);
         }
 
         // not so sure this is a good approach
         // maybe just do the recompress once the next chunk is created
-        if (now - a->seenPosReliable > traceChunkDuration() && !a->chunkRecompressed && a->trace_chunk_len > 0) {
-            stateChunk *lastChunk = &a->trace_chunks[a->trace_chunk_len - 1];
+        if (now - a->seenPosReliable > traceChunkDuration() && !a->chunkRecompressed && a->traceHistory->trace_chunk_len > 0) {
+            stateChunk *lastChunk = &a->traceHistory->trace_chunks[a->traceHistory->trace_chunk_len - 1];
             compressCurrent(a, passbuffer, now);
-            if (lastChunk == &a->trace_chunks[a->trace_chunk_len - 1]) {
+            if (lastChunk == &a->traceHistory->trace_chunks[a->traceHistory->trace_chunk_len - 1]) {
                 recompressStateChunk(a, lastChunk, passbuffer);
             }
         }
@@ -2876,7 +2923,7 @@ no_save_state:
     if (!a->trace_current) {
         resizeTraceCurrent(a, now, 0, 0);
         scheduleMemBothWrite(a, now); // rewrite full history file
-        a->trace_next_perm = now + GLOBE_PERM_IVAL / 2; // schedule perm write
+        a->traceHistory->trace_next_perm = now + GLOBE_PERM_IVAL / 2; // schedule perm write
 
         //fprintf(stderr, "%06x: new trace\n", a->addr);
     }
@@ -3124,11 +3171,11 @@ void save_blob(int blob, threadpool_buffer_t *pbuffer1, threadpool_buffer_t *pbu
                 traceUsePosBuffered(copy);
 
                 size_state += sizeof(struct aircraft);
-                if (copy->trace_chunk_len > 0 && copy->trace_chunks == NULL) {
-                    fprintf(stderr, "<3> %06x trace corrupted, copy->trace_chunks is NULL but copy->trace_chunk_len > 0\n", copy->addr);
+                if (copy->traceHistory->trace_chunk_len > 0 && copy->traceHistory->trace_chunks == NULL) {
+                    fprintf(stderr, "<3> %06x trace corrupted, copy->traceHistory->trace_chunks is NULL but copy->traceHistory->trace_chunk_len > 0\n", copy->addr);
                 }
-                for (int k = 0; k < copy->trace_chunk_len; k++) {
-                    stateChunk *chunk = &copy->trace_chunks[k];
+                for (int k = 0; k < copy->traceHistory->trace_chunk_len; k++) {
+                    stateChunk *chunk = &copy->traceHistory->trace_chunks[k];
                     size_state += sizeof(stateChunk);
                     size_state += roundUp8(chunk->compressed_size);
                 }
@@ -3229,8 +3276,8 @@ void save_blob(int blob, threadpool_buffer_t *pbuffer1, threadpool_buffer_t *pbu
                 uint64_t fourState_size = sizeof(fourState);
                 p += memcpySize(p, &fourState_size, sizeof(fourState_size));
 
-                for (int k = 0; k < copy->trace_chunk_len; k++) {
-                    stateChunk *chunk = &copy->trace_chunks[k];
+                for (int k = 0; k < copy->traceHistory->trace_chunk_len; k++) {
+                    stateChunk *chunk = &copy->traceHistory->trace_chunks[k];
                     p += memcpySize(p, chunk, sizeof(stateChunk));
 
                     p += memcpySize(p, chunk->compressed, chunk->compressed_size);
@@ -3932,7 +3979,7 @@ void unlinkPerm(struct aircraft *a) {
 
     int64_t now = mstime();
 
-    a->trace_perm_last_timestamp = 0;
+    a->traceHistory->trace_perm_last_timestamp = 0;
 
     // fiftyfive_ago changes day 55 min after midnight: stop writing the previous days traces
     struct tm fiftyfive = fiftyfiveTime(now);
@@ -4022,7 +4069,7 @@ void traceDelete() {
         setTrace(a, trace, trace_len, &passbuffer);
 
         int64_t now = mstime();
-        a->trace_next_perm = now;
+        a->traceHistory->trace_next_perm = now;
         scheduleMemBothWrite(a, now);
         traceMaintenance(a, now, &passbuffer);
 

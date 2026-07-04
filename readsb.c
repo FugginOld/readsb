@@ -141,14 +141,14 @@ static void configSetDefaults(void) {
     memset(&Modes, 0, sizeof (Modes));
 
     // Now initialise things that should not be 0/NULL to their defaults
-    Modes.gain = MODES_MAX_GAIN;
+    SdrConfig.gain = MODES_MAX_GAIN;
 
     Modes.acHashBits = AIRCRAFT_HASH_BITS;
     Modes.acBuckets = 1 << Modes.acHashBits; // this is critical for hashing purposes
 
     Modes.receiver_table_hash_bits = 6; // dynamically resized, start very small
 
-    Modes.freq = MODES_DEFAULT_FREQ;
+    SdrConfig.freq = MODES_DEFAULT_FREQ;
     Modes.check_crc = 1;
     Modes.net_heartbeat_interval = MODES_NET_HEARTBEAT_INTERVAL;
     //Modes.db_file = strdup("/usr/local/share/tar1090/git-db/aircraft.csv.gz");
@@ -179,7 +179,7 @@ static void configSetDefaults(void) {
     Modes.json_location_accuracy = 2;
     Modes.maxRange = 1852 * 450; // 450 nmi default max range
     Modes.nfix_crc = 1;
-    Modes.biastee = 0;
+    SdrConfig.biastee = 0;
     Modes.position_persistence = 4;
     Modes.tcpBuffersAuto = 1;
     Modes.net_sndbuf_size = 1;
@@ -265,7 +265,7 @@ static void configSetDefaults(void) {
     Modes.max_fds -= 32; // reserve some fds for things we don't account for later like json writing.
                          // this is an high estimate ... if ppl run out of fds for other stuff they should up rlimit
 
-    Modes.sdr_buf_size = 128 * 1024; // 128 kibibytes
+    SdrConfig.sdr_buf_size = 128 * 1024; // 128 kibibytes
 
     // in seconds, default to 1 hour
     Modes.dump_interval = 60 * 60;
@@ -312,7 +312,7 @@ static void modesInit(void) {
 
     pthread_mutex_init(&Modes.traceDebugMutex, NULL);
     pthread_mutex_init(&Modes.hungTimerMutex, NULL);
-    pthread_mutex_init(&Modes.sdrControlMutex, NULL);
+    pthread_mutex_init(&SdrConfig.sdrControlMutex, NULL);
     pthread_mutex_init(&Modes.aircraftBackMutex, NULL);
     pthread_mutex_init(&Modes.aircraftLoadMutex, NULL);
     pthread_mutex_init(&Modes.aircraftCreateMutex, NULL);
@@ -353,7 +353,7 @@ static void modesInit(void) {
 
     if (!Modes.net_only) {
         for (int i = 0; i < MODES_MAG_BUFFERS; ++i) {
-            size_t alloc = (Modes.sdr_buf_samples + Modes.trailing_samples) * sizeof (uint16_t);
+            size_t alloc = (SdrConfig.sdr_buf_samples + Modes.trailing_samples) * sizeof (uint16_t);
             if ((Modes.mag_buffers[i].data = cmalloc(alloc)) == NULL) {
                 fprintf(stderr, "Out of memory allocating magnitude buffer.\n");
                 exit(1);
@@ -580,7 +580,7 @@ static void *readerEntryPoint(void *arg) {
     srandom(get_seed());
 
     if (!sdrOpen()) {
-        Modes.sdrOpenFailed = 1;
+        SdrConfig.sdrOpenFailed = 1;
         setExit(2); // unexpected exit
         log_with_timestamp("sdrOpen() failed, exiting!");
         return NULL;
@@ -861,7 +861,7 @@ static void gainStatistics(struct mag_buf *buf) {
     double noiseLowPercent = noiseLowSamples / (double) totalSamples * 100.0;
     double noiseHighPercent = noiseHighSamples / (double) totalSamples * 100.0;
 
-    if (!Modes.autoGain) {
+    if (!SdrConfig.autoGain) {
         goto reset;
     }
 
@@ -873,24 +873,24 @@ static void gainStatistics(struct mag_buf *buf) {
     int loud = loudEvents > 0;
     int veryLoud = loudEvents > 5;
     if (loud || noiseHigh) {
-        Modes.lowerGain = 1;
-        if (veryLoud && !Modes.gainStartup) {
-            Modes.lowerGain = 2;
+        SdrConfig.lowerGain = 1;
+        if (veryLoud && !SdrConfig.gainStartup) {
+            SdrConfig.lowerGain = 2;
         }
         if (loud) {
-            loudRebound += Modes.lowerGain;
+            loudRebound += SdrConfig.lowerGain;
         }
     } else if (noiseLow) {
         if (
-                Modes.gainStartup
+                SdrConfig.gainStartup
                 || slowRise >= riseTime / interval
                 || (loudRebound > 1 && slowRise >= reboundTime / interval)
            ) {
             slowRise = 0;
-            Modes.increaseGain = 1;
+            SdrConfig.increaseGain = 1;
             if (loudRebound > 0) {
                 loudRebound *= 0.95f;
-                loudRebound -= Modes.increaseGain;
+                loudRebound -= SdrConfig.increaseGain;
             }
         } else {
             slowRise++;
@@ -898,13 +898,13 @@ static void gainStatistics(struct mag_buf *buf) {
     }
 
 
-    if (Modes.increaseGain && Modes.gain == 496 && buf->sysTimestamp < nextRaiseAgc) {
+    if (SdrConfig.increaseGain && SdrConfig.gain == 496 && buf->sysTimestamp < nextRaiseAgc) {
         goto reset;
     }
-    if (Modes.increaseGain || Modes.lowerGain) {
-        if (Modes.gainStartup) {
-            Modes.lowerGain *= Modes.gainStartup;
-            Modes.increaseGain *= Modes.gainStartup;
+    if (SdrConfig.increaseGain || SdrConfig.lowerGain) {
+        if (SdrConfig.gainStartup) {
+            SdrConfig.lowerGain *= SdrConfig.gainStartup;
+            SdrConfig.increaseGain *= SdrConfig.gainStartup;
         }
         char *reason = "";
         if (veryLoud) {
@@ -917,7 +917,7 @@ static void gainStatistics(struct mag_buf *buf) {
             reason = "increasing gain, noise too low:             ";
         }
         sdrSetGain(reason);
-        if (Modes.gain == MODES_RTL_AGC) {
+        if (SdrConfig.gain == MODES_RTL_AGC) {
             // switching to AGC is only done every 30 seconds to avoid oscillations due to the large step
             nextRaiseAgc = buf->sysTimestamp + 30 * SECONDS;
         }
@@ -927,7 +927,7 @@ static void gainStatistics(struct mag_buf *buf) {
     }
 
 reset:
-    Modes.gainStartup /= 2;
+    SdrConfig.gainStartup /= 2;
     loudEvents = 0;
     noiseLowSamples = 0;
     noiseHighSamples = 0;
@@ -941,7 +941,7 @@ static void timingStatistics(struct mag_buf *buf) {
     int64_t elapsed_ts = buf->sysMicroseconds - last_ts;
 
     // nominal time in us between two SDR callbacks
-    int64_t nominal = Modes.sdr_buf_samples * 1000LL * 1000LL / Modes.sample_rate;
+    int64_t nominal = SdrConfig.sdr_buf_samples * 1000LL * 1000LL / Modes.sample_rate;
 
     int64_t jitter = elapsed_ts - nominal;
     if (last_ts && Modes.log_usb_jitter && fabs((double)jitter) > Modes.log_usb_jitter) {
@@ -967,14 +967,14 @@ static void timingStatistics(struct mag_buf *buf) {
             double freq_ratio = elapsed_sample / (elapsed_sys * 12.0);
             double diff_us = elapsed_sample / 12.0 - elapsed_sys;
             double ppm = (freq_ratio - 1) * 1e6;
-            Modes.estimated_ppm = ppm;
-            if (Modes.devel_log_ppm && fabs(ppm) > Modes.devel_log_ppm) {
+            SdrConfig.estimated_ppm = ppm;
+            if (SdrConfig.devel_log_ppm && fabs(ppm) > SdrConfig.devel_log_ppm) {
                 fprintf(stderr, "SDR ppm: %8.1f elapsed: %6.0f ms diff: %6.0f us last jitter: %6.0f\n", ppm, elapsed_sys / 1000.0, diff_us, (double) jitter);
             }
             if (fabs(ppm) > 600) {
                 if (ppm < -1000) {
                     int packets_lost = (int) nearbyint(ppm / -1820);
-                    Modes.stats_current.samples_lost += packets_lost * Modes.sdr_buf_samples;
+                    Modes.stats_current.samples_lost += packets_lost * SdrConfig.sdr_buf_samples;
                     fprintf(stderr, "Lost %d packets (%.1f us) on USB, MLAT could be UNSTABLE, check sync! (ppm: %.0f)"
                             "(or the system clock jumped for some reason)\n", packets_lost, diff_us, ppm);
                 } else {
@@ -1060,7 +1060,7 @@ static void *decodeEntryPoint(void *arg) {
                 gainStatistics(buf);
                 timingStatistics(buf);
 
-                Modes.stats_current.samples_lost += Modes.sdr_buf_samples - buf->length;
+                Modes.stats_current.samples_lost += SdrConfig.sdr_buf_samples - buf->length;
                 Modes.stats_current.samples_processed += buf->length;
                 Modes.stats_current.samples_dropped += buf->dropped;
                 end_cpu_timing(&start_time, &Modes.stats_current.demod_cpu);
@@ -1426,7 +1426,7 @@ static void cleanup_and_exit(int code) {
     geomag_destroy();
     interactiveCleanup();
     cleanup_globe_index();
-    sfree(Modes.dev_name);
+    sfree(SdrConfig.dev_name);
     sfree(Modes.filename);
     sfree(Modes.prom_file);
     sfree(Modes.json_dir);
@@ -1618,7 +1618,7 @@ static int parseLongs(char *p, long long *results, int result_size) {
 }
 
 static void parseGainOpt(char *arg) {
-    Modes.gainStartup = 8;
+    SdrConfig.gainStartup = 8;
     int maxTokens = 128;
     char* token[maxTokens];
     if (!arg) {
@@ -1626,29 +1626,29 @@ static void parseGainOpt(char *arg) {
         return;
     }
     if (strcasestr(arg, "auto") == arg) {
-        if (Modes.sdr_type != SDR_RTLSDR) {
+        if (SdrConfig.sdr_type != SDR_RTLSDR) {
             fprintf(stderr, "autogain not supported for non rtl-sdr devices\n");
             return;
         }
         if (strcasestr(arg, "auto-verbose") == arg) {
             fprintf(stderr, "autogain enabled, verbose mode\n");
-            Modes.gainQuiet = 0;
+            SdrConfig.gainQuiet = 0;
         } else {
             fprintf(stderr, "autogain enabled, silent mode, suppressing gain changing messages\n");
-            Modes.gainQuiet = 1;
+            SdrConfig.gainQuiet = 1;
         }
-        Modes.autoGain = 1;
-        Modes.gain = 300;
+        SdrConfig.autoGain = 1;
+        SdrConfig.gain = 300;
 
         char *argdup = strdup(arg);
         tokenize(&argdup, ",", token, maxTokens);
         if (token[1]) {
-            Modes.minGain = (int) (atof(token[1])*10); // Gain is in tens of DBs
+            SdrConfig.minGain = (int) (atof(token[1])*10); // Gain is in tens of DBs
         } else {
-            Modes.minGain = 0;
+            SdrConfig.minGain = 0;
         }
-        if (Modes.gain < Modes.minGain) {
-            Modes.gain = Modes.minGain;
+        if (SdrConfig.gain < SdrConfig.minGain) {
+            SdrConfig.gain = SdrConfig.minGain;
         }
         if (token[2]) {
             Modes.noiseLowThreshold = atoi(token[2]);
@@ -1666,12 +1666,12 @@ static void parseGainOpt(char *arg) {
             Modes.loudThreshold = 243;
         }
         fprintf(stderr, "lowestGain: %4.1f noiseLowThreshold: %3d noiseHighThreshold: %3d loudThreshold: %3d\n",
-                Modes.minGain / 10.0, Modes.noiseLowThreshold, Modes.noiseHighThreshold, Modes.loudThreshold);
+                SdrConfig.minGain / 10.0, Modes.noiseLowThreshold, Modes.noiseHighThreshold, Modes.loudThreshold);
     } else {
-        Modes.gain = (int) (atof(arg)*10); // Gain is in tens of DBs
-        Modes.autoGain = 0;
-        Modes.gainQuiet = 0;
-        Modes.minGain = 0;
+        SdrConfig.gain = (int) (atof(arg)*10); // Gain is in tens of DBs
+        SdrConfig.autoGain = 0;
+        SdrConfig.gainQuiet = 0;
+        SdrConfig.minGain = 0;
     }
 }
 
@@ -1681,20 +1681,20 @@ static error_t parse_opt(int key, char *arg, struct argp_state *state) {
     char* token[maxTokens];
     switch (key) {
         case OptDevice:
-            Modes.dev_name = strdup(arg);
+            SdrConfig.dev_name = strdup(arg);
             break;
         case OptGain:
-            sfree(Modes.gainArg);
-            Modes.gainArg = strdup(arg);
+            sfree(SdrConfig.gainArg);
+            SdrConfig.gainArg = strdup(arg);
             break;
         case OptFreq:
-            Modes.freq = (int) strtoll(arg, NULL, 10);
+            SdrConfig.freq = (int) strtoll(arg, NULL, 10);
             break;
         case OptDcFilter:
-            Modes.dc_filter = 1;
+            SdrConfig.dc_filter = 1;
             break;
         case OptBiasTee:
-            Modes.biastee = 1;
+            SdrConfig.biastee = 1;
             break;
         case OptFix:
             Modes.nfix_crc = 1;
@@ -2083,7 +2083,7 @@ static error_t parse_opt(int key, char *arg, struct argp_state *state) {
             Modes.net_verbatim = 1;
             break;
         case OptSdrBufSize:
-            Modes.sdr_buf_size = atoi(arg) * 1024;
+            SdrConfig.sdr_buf_size = atoi(arg) * 1024;
             break;
         case OptNetReceiverId:
             Modes.netReceiverId = 1;
@@ -2210,13 +2210,13 @@ static error_t parse_opt(int key, char *arg, struct argp_state *state) {
 
                 if (strcasecmp(token[0], "log_ppm") == 0) {
                     if (token[1]) {
-                        Modes.devel_log_ppm = atoi(token[1]);
+                        SdrConfig.devel_log_ppm = atoi(token[1]);
                     }
-                    if (Modes.devel_log_ppm == 0) {
-                        Modes.devel_log_ppm = -1;
+                    if (SdrConfig.devel_log_ppm == 0) {
+                        SdrConfig.devel_log_ppm = -1;
                     }
                     // setting to -1 to enable due to the following check
-                    // if (Modes.devel_log_ppm && fabs(ppm) > Modes.devel_log_ppm) {
+                    // if (SdrConfig.devel_log_ppm && fabs(ppm) > SdrConfig.devel_log_ppm) {
                 }
 
                 // use traceLast to add granular data to full and history traces
@@ -2408,7 +2408,7 @@ static error_t parse_opt(int key, char *arg, struct argp_state *state) {
         case OptSoapyEnableAgc:
         case OptSoapyGainElement:
 #endif
-            if (Modes.sdr_type == SDR_NONE) {
+            if (SdrConfig.sdr_type == SDR_NONE) {
                 fprintf(stderr, "ERROR: SDR / device type specific options must be specified AFTER the --device-type xyz parameter.\n");
                 return ARGP_ERR_UNKNOWN;
             }
@@ -2445,7 +2445,7 @@ int parseCommandLine(int argc, char **argv) {
     if (strstr(argv[0], "viewadsb")) {
         Modes.viewadsb = 1;
         Modes.net = 1;
-        Modes.sdr_type = SDR_NONE;
+        SdrConfig.sdr_type = SDR_NONE;
         Modes.net_only = 1;
 #ifndef DISABLE_INTERACTIVE
         Modes.interactive = 1;
@@ -2525,14 +2525,14 @@ int parseCommandLine(int argc, char **argv) {
 }
 
 static void configAfterParse() {
-    Modes.sdr_buf_samples = Modes.sdr_buf_size / 2;
+    SdrConfig.sdr_buf_samples = SdrConfig.sdr_buf_size / 2;
     Modes.trackExpireMax = Modes.trackExpireJaero + TRACK_EXPIRE_LONG + 1 * MINUTES;
 
-    if (Modes.sdr_type == SDR_RTLSDR && !Modes.gainArg) {
+    if (SdrConfig.sdr_type == SDR_RTLSDR && !SdrConfig.gainArg) {
         parseGainOpt("auto");
-    } else if (Modes.gainArg) {
-        parseGainOpt(Modes.gainArg);
-        sfree(Modes.gainArg);
+    } else if (SdrConfig.gainArg) {
+        parseGainOpt(SdrConfig.gainArg);
+        sfree(SdrConfig.gainArg);
     }
 
     if (Modes.json_globe_index || Modes.globe_history_dir) {
@@ -2588,7 +2588,7 @@ static void configAfterParse() {
     if (sched_getaffinity(getpid(), sizeof(mask), &mask) == 0) {
         Modes.num_procs = CPU_COUNT(&mask);
 #if (defined(__arm__))
-        if (Modes.num_procs < 2 && !Modes.preambleThreshold && Modes.sdr_type != SDR_NONE) {
+        if (Modes.num_procs < 2 && !Modes.preambleThreshold && SdrConfig.sdr_type != SDR_NONE) {
             fprintf(stderr, "WARNING: Reducing preamble threshold / decoding performance as this system has only 1 core (explicitely set --preamble-threshold to disable this behaviour)!\n");
             Modes.preambleThreshold = PREAMBLE_THRESHOLD_PIZERO;
             Modes.fixDF = 0;
@@ -2668,7 +2668,7 @@ static void configAfterParse() {
     if (Modes.net_output_flush_interval < 0)
         Modes.net_output_flush_interval = 0;
 
-    if (Modes.net_output_flush_interval < 51 && Modes.sdr_type != SDR_NONE && !(Modes.sdr_type == SDR_MODESBEAST || Modes.sdr_type == SDR_GNS)) {
+    if (Modes.net_output_flush_interval < 51 && SdrConfig.sdr_type != SDR_NONE && !(SdrConfig.sdr_type == SDR_MODESBEAST || SdrConfig.sdr_type == SDR_GNS)) {
         // the SDR code runs the network tasks about every 50ms
         // avoid delay by just flushing every call of the network tasks
         // somewhat hacky, anyone reading this code surprised at this point?
@@ -2704,14 +2704,14 @@ static void configAfterParse() {
         Modes.net_connector_delay = 600 * 1000;
     }
 
-    if (Modes.sdr_type == SDR_NONE) {
+    if (SdrConfig.sdr_type == SDR_NONE) {
         if (Modes.net)
             Modes.net_only = 1;
         if (!Modes.net_only) {
             fprintf(stderr, "No networking or SDR input selected, exiting! Try '--device-type rtlsdr'! See 'readsb --help'\n");
             cleanup_and_exit(1);
         }
-    } else if (Modes.sdr_type == SDR_MODESBEAST || Modes.sdr_type == SDR_GNS) {
+    } else if (SdrConfig.sdr_type == SDR_MODESBEAST || SdrConfig.sdr_type == SDR_GNS) {
         Modes.net = 1;
         Modes.net_only = 1;
     } else {
@@ -2899,7 +2899,7 @@ static void checkSetGain() {
 
     sdrSetGain("");
 
-    //fprintf(stderr, "Modes.gain (tens of dB): %d\n", Modes.gain);
+    //fprintf(stderr, "SdrConfig.gain (tens of dB): %d\n", SdrConfig.gain);
 }
 
 static void miscStuff(int64_t now) {
@@ -3199,7 +3199,7 @@ int main(int argc, char **argv) {
         }
     }
 
-    if (Modes.sdr_type != SDR_NONE) {
+    if (SdrConfig.sdr_type != SDR_NONE) {
         threadCreate(&Threads.reader, NULL, readerEntryPoint, NULL);
     }
 
@@ -3328,7 +3328,7 @@ int main(int argc, char **argv) {
 
     threadSignalJoin(&Threads.misc);
 
-    if (Modes.sdr_type != SDR_NONE) {
+    if (SdrConfig.sdr_type != SDR_NONE) {
         threadSignalJoin(&Threads.reader);
     }
 
@@ -3367,7 +3367,7 @@ int main(int argc, char **argv) {
 
     pthread_mutex_destroy(&Modes.traceDebugMutex);
     pthread_mutex_destroy(&Modes.hungTimerMutex);
-    pthread_mutex_destroy(&Modes.sdrControlMutex);
+    pthread_mutex_destroy(&SdrConfig.sdrControlMutex);
     pthread_mutex_destroy(&Modes.aircraftBackMutex);
     pthread_mutex_destroy(&Modes.aircraftLoadMutex);
     pthread_mutex_destroy(&Modes.aircraftCreateMutex);
@@ -3390,7 +3390,7 @@ int main(int argc, char **argv) {
         destroy_task_group(Modes.traceTasks);
     }
 
-    if (Modes.state_dir && Modes.sdrOpenFailed) {
+    if (Modes.state_dir && SdrConfig.sdrOpenFailed) {
         fprintf(stderr, "not saving state: SDR failed\n");
         sfree(Modes.state_dir);
         Modes.state_dir = NULL;

@@ -484,7 +484,7 @@ iq_convert_fn init_converter(input_format_t format,
         (*out_state)->dc_a = 0.0;
     }
 
-    if (Modes.sdr_type == SDR_IFILE) {
+    if (SdrConfig.sdr_type == SDR_IFILE) {
         fprintf(stderr, "init_converter: using %s\n", converters_table[i].description);
     }
 

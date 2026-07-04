@@ -75,9 +75,9 @@ bool hackRFOpen() {
 	goto error;
     }
 
-    fprintf(stderr, "Opening HackRF: %s\n", Modes.dev_name);
-    if (Modes.dev_name) {
-	status = hackrf_open_by_serial(Modes.dev_name, &hackRF.device);
+    fprintf(stderr, "Opening HackRF: %s\n", SdrConfig.dev_name);
+    if (SdrConfig.dev_name) {
+	status = hackrf_open_by_serial(SdrConfig.dev_name, &hackRF.device);
     } else {
         status = hackrf_open(&hackRF.device);
     }
@@ -91,18 +91,18 @@ bool hackRFOpen() {
         goto error;
     }
 
-    if ((status = hackrf_set_freq(hackRF.device, Modes.freq)) != HACKRF_SUCCESS ) {
+    if ((status = hackrf_set_freq(hackRF.device, SdrConfig.freq)) != HACKRF_SUCCESS ) {
         fprintf(stderr, "hackrf_set_freq failed: %s\n", hackrf_error_name(status));
         goto error;
     }
 
-    if (Modes.gain == MODES_AUTO_GAIN || Modes.gain >= 400) {
+    if (SdrConfig.gain == MODES_AUTO_GAIN || SdrConfig.gain >= 400) {
         // hackRF doesn't have automatic gain control
-        Modes.gain = 400;
+        SdrConfig.gain = 400;
     }
-    if (Modes.gain < 0) {
+    if (SdrConfig.gain < 0) {
 	// gain is unsigned
-        Modes.gain = 0;
+        SdrConfig.gain = 0;
     }
 
     if (hackRF.rf_gain) {
@@ -112,7 +112,7 @@ bool hackRFOpen() {
         }
     }
 
-    if ((status = hackrf_set_lna_gain(hackRF.device, Modes.gain / 10)) != HACKRF_SUCCESS) {
+    if ((status = hackrf_set_lna_gain(hackRF.device, SdrConfig.gain / 10)) != HACKRF_SUCCESS) {
         fprintf(stderr, "hackrf_set_lna_gain failed: %s\n", hackrf_error_name(status));
 	goto error;
     }
@@ -122,7 +122,7 @@ bool hackRFOpen() {
 	goto error;
     }
 
-    if (Modes.biastee) {
+    if (SdrConfig.biastee) {
         fprintf(stderr, "Enabling Bias Tee\n");
         if ((status = hackrf_set_antenna_enable(hackRF.device, 1)) != HACKRF_SUCCESS) {
             fprintf(stderr, "hackrf_set_antenna_enable failed: %s\n", hackrf_error_name(status));
@@ -131,11 +131,11 @@ bool hackRFOpen() {
 
     fprintf (stderr, "HackRF successfully initialized "
                      "(AMP Enable: %i, LNA Gain: %i, VGA Gain: %i).\n",
-                     hackRF.rf_gain, Modes.gain / 10, hackRF.vga_gain);
+                     hackRF.rf_gain, SdrConfig.gain / 10, hackRF.vga_gain);
 
     hackRF.converter = init_converter(INPUT_UC8,
             Modes.sample_rate,
-            Modes.dc_filter,
+            SdrConfig.dc_filter,
             &hackRF.converter_state);
     if (!hackRF.converter) {
         fprintf(stderr, "can't initialize sample converter\n");
@@ -186,15 +186,15 @@ static int hackrfCallback(hackrf_transfer *transfer) {
     lastbuf = &Modes.mag_buffers[(Modes.first_free_buffer + MODES_MAG_BUFFERS - 1) % MODES_MAG_BUFFERS];
     free_bufs = (Modes.first_filled_buffer - next_free_buffer + MODES_MAG_BUFFERS) % MODES_MAG_BUFFERS;
 
-    if (len != Modes.sdr_buf_size) {
+    if (len != SdrConfig.sdr_buf_size) {
         static int64_t antiSpam;
         if (mstime() > antiSpam) {
             antiSpam = mstime() + 10 * SECONDS;
             fprintf(stderr, "weirdness: hackRF gave us a block with an unusual size (got %u bytes, expected %u bytes), suppressing this message for 10 seconds\n",
-                    (unsigned) len, (unsigned) Modes.sdr_buf_size);
+                    (unsigned) len, (unsigned) SdrConfig.sdr_buf_size);
         }
-        if (len > Modes.sdr_buf_size) {
-            unsigned discard = (len - Modes.sdr_buf_size + 1) / 2;
+        if (len > SdrConfig.sdr_buf_size) {
+            unsigned discard = (len - SdrConfig.sdr_buf_size + 1) / 2;
             outbuf->dropped += discard;
             buf += discard * 2;
             len -= discard * 2;

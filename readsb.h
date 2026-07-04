@@ -496,11 +496,6 @@ static inline void munmap_or_exit(void *ptr, size_t size, const char *file, int 
 
 //======================== structure declarations =========================
 
-typedef enum
-{
-    SDR_NONE = 0, SDR_IFILE, SDR_RTLSDR, SDR_BLADERF, SDR_MICROBLADERF, SDR_HACKRF, SDR_MODESBEAST, SDR_PLUTOSDR, SDR_SOAPYSDR, SDR_GNS
-} sdr_type_t;
-
 // Structure representing one magnitude buffer
 
 struct mag_buf
@@ -556,9 +551,6 @@ struct _Modes
     threadpool_t *allPool;
     task_group_t *allTasks;
 
-    uint32_t sdr_buf_size;
-    uint32_t sdr_buf_samples;
-
     int64_t traceWriteTimelimit;
     int tracePoolSize;
     threadpool_t *tracePool;
@@ -581,28 +573,9 @@ struct _Modes
     int volatile exit; // Exit from the main loop when true
     int volatile exitSoon;
     int fd; // --ifile option file descriptor
-    input_format_t input_format; // --iformat option
-    iq_convert_fn converter_function;
-    char * dev_name;
-    pthread_mutex_t sdrControlMutex;
-    int8_t sdrInitialized;
-    int8_t sdrOpenFailed;
-    int8_t increaseGain;
-    int8_t lowerGain;
-    int8_t autoGain;
-    int8_t gainQuiet;
-    int8_t gainStartup;
-    char *gainArg;
     uint32_t loudThreshold;
     uint32_t noiseLowThreshold;
     uint32_t noiseHighThreshold;
-    int minGain;
-    int gain;
-    int dc_filter; // should we apply a DC filter?
-    int enable_agc;
-    sdr_type_t sdr_type; // where are we getting data from?
-    int freq;
-    int ppm_error;
     char aneterr[ANET_ERR_LEN];
     struct net_service_group services_in; // Active services which primarily receive data
     struct net_service_group services_out; // Active services which primarily send data
@@ -630,7 +603,6 @@ struct _Modes
     int api_fds_per_thread;
     int total_aircraft_count;
     int json_aircraft_count;
-    float estimated_ppm;
     uint64_t trace_chunk_size;
     uint64_t trace_cache_size;
     uint64_t trace_current_size;
@@ -833,7 +805,6 @@ struct _Modes
     int32_t ping_reduce;
     int32_t ping_reject;
     int32_t log_usb_jitter;
-    int32_t devel_log_ppm;
     int32_t traceLastMax;
     int32_t beforeLandHighRes;
     int32_t afterGroundTransitionHighRes;
@@ -946,7 +917,6 @@ struct _Modes
     uint32_t binCraftVersion; // never change the type for this variable
     int8_t userLocationValid;
     int8_t userLocationRef;
-    int8_t biastee;
     int8_t bad_tuner;
     int8_t triggerPermWriteDay;
     int8_t acasDay;

@@ -26,6 +26,9 @@
 
 #include <sys/socket.h>
 
+#define DLE 0x10
+#define ETX 0x03
+
 // Describes a networking service (group of connections)
 
 struct aircraft;
@@ -240,5 +243,44 @@ typedef union __packed {
 void netUseMessage(struct modesMessage *mm);
 void netDrainMessageBuffers();
 struct modesMessage *netGetMM(struct messageBuffer *buf);
+
+
+// exported for use by net_*.c protocol adapters
+void modesCloseClient(struct client *c);
+void pingClient(struct client *c, uint32_t ping);
+int pongReceived(struct client *c, int64_t now);
+void dropHalfUntil(int64_t now, struct client *c, int64_t until);
+int flushClient(struct client *c, int64_t now);
+void *prepareWrite(struct net_writer *writer, int len);
+void completeWrite(struct net_writer *writer, void *endptr);
+void autoset_modeac();
+int decodeHexMessage(struct client *c, char *hex, int64_t now, struct modesMessage *mm);
+const char *hexDumpString(const char *str, int strlen, char *buf, int buflen);
+void garbageIncrement(struct client *c, int add, int line);
+char *read_uuid(struct client *c, char *p, char *eod);
+
+static inline __attribute__((always_inline)) int hexDigitVal(int c) {
+    if (c >= '0' && c <= '9') return c - '0';
+    else if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    else if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    else return -1;
+}
+//
+//=========================================================================
+//
+// Print the two hex digits to a string for a single byte.
+//
+
+static inline __attribute__((always_inline)) void printHexDigit(char *p, unsigned char c) {
+    const char hex_lookup[] = "0123456789ABCDEF";
+    p[0] = hex_lookup[(c >> 4) & 0x0F];
+    p[1] = hex_lookup[c & 0x0F];
+}
+
+//
+//=========================================================================
+//
+// Write raw output to TCP clients
+//
 
 #endif

@@ -53,6 +53,11 @@
 
 #include "readsb.h"
 
+// mark an aircraft as seen at `now` without going through a full message update.
+void trackTouchSeen(struct aircraft *a, int64_t now) {
+    a->seen = now;
+}
+
 uint32_t modeAC_count[4096];
 uint32_t modeAC_lastcount[4096];
 uint32_t modeAC_match[4096];
@@ -1993,208 +1998,10 @@ static int accept_cpr(struct aircraft *a, struct modesMessage *mm) {
 // Receive new messages and update tracked aircraft state
 //
 
-struct aircraft *trackUpdateFromMessage(struct modesMessage *mm) {
-    struct aircraft *res = NULL;
-    int64_t now = mm->sysTimestamp;
-
-    if (mm->msgtype == DFTYPE_MODEAC) {
-        // Mode A/C, just count it (we ignore SPI)
-        modeAC_count[modeAToIndex(mm->squawkHex)]++;
-        res = NULL;
-        goto exit;
-    }
-    if (mm->decodeResult < 0) {
-        res = NULL;
-        goto exit;
-    }
-
-    ++Modes.stats_current.messages_total;
-
-    Modes.messageRateAcc[0]++;
-    if (now > Modes.nextMessageRateCalc) {
-        calculateMessageRateGlobal(now);
-    }
-
-    if (mm->client) {
-        if (!mm->garbage) {
-            mm->client->messageCounter++;
-        }
-        mm->client->recentMessages++;
-        if (mm->cpr_valid) {
-            mm->client->recentPositions++;
-        }
-        if (mm->client->unreasonable_messagerate) {
-            res = NULL;
-            goto exit;
-        }
-    }
-
-    if (0) {
-        static int64_t lastPrint;
-        static int msgAcc;
-        int64_t printIval = 50;
-
-        msgAcc++;
-
-        if (now > lastPrint + printIval) {
-            int64_t elapsed = now - lastPrint;
-            double rate = msgAcc / (elapsed * 0.001);
-            int width = rate / 20;
-
-            unsigned char bar[1024];
-            for (int i = 0; i < (int) sizeof(bar); i++) {
-                bar[i] = 219; // ascii block
-            }
-
-            if (width >= (int) sizeof(bar)) {
-                width = (int) sizeof(bar) - 1;
-            }
-            bar[width] = '\0';
-
-            fprintTimePrecise(stderr, now);
-            fprintf(stderr, " %4d %s\n", (int) rate, bar);
-            //fprintf(stderr, "%5.0f\n", rate / 100);
-            lastPrint = now;
-            msgAcc = 0;
-        }
-    }
-
-
-    struct aircraft *a;
-    unsigned int cpr_new = 0;
-    mm->calculated_track = -1;
-
-    mm->address_reliable = addressReliable(mm);
-
-    // Lookup our aircraft or create a new one
-    a = aircraftGet(mm->addr);
-    if (!a) { // If it's a currently unknown aircraft....
-        if (mm->address_reliable) {
-            a = aircraftCreate(mm->addr); // ., create a new record for it,
-        } else {
-            //fprintf(stderr, "%06x: !a && !addressReliable(mm)\n", mm->addr);
-            res = NULL;
-            goto exit;
-        }
-    }
-
-    struct aircraft scratch;
-    bool haveScratch = false;
-    if (mm->cpr_valid || mm->sbs_pos_valid) {
-        memcpy(&scratch, a, offsetof(struct aircraft, traceCache));
-        haveScratch = true;
-        // messages from receivers classified garbage with position get processed to see if they still send garbage
-    } else if (mm->garbage) {
-        res = NULL;
-        goto exit;
-    }
-
-    // only count the aircraft as "seen" for reliable messages with CRC
-    if (mm->address_reliable) {
-        int64_t elapsed_seen = now - a->seen;
-        if (elapsed_seen > 5 * MINUTES) {
-            Modes.stats_current.unique_aircraft++;
-            if (
-                    (elapsed_seen > 15 * MINUTES && a->addrtype != ADDR_JAERO)
-                    || (elapsed_seen > Modes.trackExpireJaero && a->addrtype == ADDR_JAERO)
-               ) {
-                // if an aircraft hasn't been active in a bit, reset its message count
-                a->messages = 0;
-            }
-        }
-
-        a->seen = now;
-
-        if (now - a->seen_pos > 500 * RECEIVERIDBUFFER) {
-            addReceiverId(a, mm, elapsed_seen);
-        }
-    }
-
-    // don't use messages with unreliable CRC too long after receiving a reliable address from an aircraft
-    if (now - a->seen > TRACK_STALE) {
-        res = NULL;
-        goto exit;
-    }
-
-    a->last_message_crc_fixed = (mm->correctedbits > 0) ? 1 : 0;
-
-
-    a->messageRateAcc[0]++;
-    if (now > a->nextMessageRateCalc) {
-        calculateMessageRate(a, now);
-    }
-
-    if (mm->signalLevel > 0) {
-
-        a->signalLevel[a->signalNext % 8] = mm->signalLevel;
-        a->signalNext++;
-        //fprintf(stderr, "%0.4f\n",mm->signalLevel);
-
-        a->lastSignalTimestamp = now;
-    } else {
-        //fprintf(stderr, "signal zero: %06x; %s\n", a->addr, source_string(mm->source));
-        // if we haven't received a message with signal level for a bit, set it to zero
-        if (now - a->lastSignalTimestamp > 15 * SECONDS && a->signalNext > 0) {
-            a->signalNext = 0;
-            //fprintf(stderr, "no_sig_thresh: %06x; %d; %d\n", a->addr, (int) a->no_signal_count, (int) a->signalNext);
-        }
-    }
-
-    // reset to 100000 on overflow ... avoid any low message count checks
-    if (a->messages == UINT32_MAX)
-        a->messages = UINT16_MAX;
-
-    a->messages++;
-
-    // update addrtype
-    float newType = mm->addrtype == ADDR_MODE_S ? 4.5 : mm->addrtype;
-    float oldType = a->addrtype == ADDR_MODE_S ? 4.5 : a->addrtype;
-    // change type ranking without messing with enum :/
-    if (
-            (newType <= oldType && now - a->addrtype_updated > TRACK_EXPIRE * 3 / 4)
-            || (newType > oldType && now - a->addrtype_updated > TRACK_EXPIRE * 3 / 2)
-       ) {
-
-        if (mm->addrtype == ADDR_ADSB_ICAO && a->position_valid.source != SOURCE_ADSB) {
-            // don't set to ADS-B without a position
-            if (mm->msgtype == 17) {
-                a->addrtype = ADDR_MODE_S; // set type ModeS for DF17 messages when not knowing position
-                a->addrtype_updated = now;
-            }
-        } else {
-            a->addrtype = mm->addrtype;
-            a->addrtype_updated = now;
-        }
-
-        if (a->addrtype > ADDR_ADSB_ICAO_NT) {
-            a->adsb_version = -1; // reset ADS-B version if a non ADS-B message type is received
-        }
-    }
-
-    // decide on where to stash the version
-    int dummy_version = -1; // used for non-adsb/adsr/tisb messages
-    int *message_version;
-
-    switch (mm->source) {
-    case SOURCE_ADSB:
-        message_version = &a->adsb_version;
-        break;
-    case SOURCE_TISB:
-        message_version = &a->tisb_version;
-        break;
-    case SOURCE_ADSR:
-        message_version = &a->adsr_version;
-        break;
-    default:
-        message_version = &dummy_version;
-        break;
-    }
-
-    // assume version 0 until we see something else
-    if (*message_version < 0) {
-        *message_version = 0;
-    }
-
+// merge every independently-validated mm-> field into the aircraft record.
+// none of this touches trace/position state, so it's safe outside the
+// scratch/rollback window trackUpdateFromMessage uses for CPR handling.
+static void mergeValidatedFields(struct aircraft *a, struct modesMessage *mm, int64_t now, int *message_version) {
     if (mm->category_valid) {
         a->category = mm->category;
         a->category_updated = now;
@@ -2475,6 +2282,211 @@ struct aircraft *trackUpdateFromMessage(struct modesMessage *mm) {
         a->oat = mm->oat;
         a->oat_updated = now;
     }
+}
+
+struct aircraft *trackUpdateFromMessage(struct modesMessage *mm) {
+    struct aircraft *res = NULL;
+    int64_t now = mm->sysTimestamp;
+
+    if (mm->msgtype == DFTYPE_MODEAC) {
+        // Mode A/C, just count it (we ignore SPI)
+        modeAC_count[modeAToIndex(mm->squawkHex)]++;
+        res = NULL;
+        goto exit;
+    }
+    if (mm->decodeResult < 0) {
+        res = NULL;
+        goto exit;
+    }
+
+    ++Modes.stats_current.messages_total;
+
+    Modes.messageRateAcc[0]++;
+    if (now > Modes.nextMessageRateCalc) {
+        calculateMessageRateGlobal(now);
+    }
+
+    if (mm->client) {
+        if (!mm->garbage) {
+            mm->client->messageCounter++;
+        }
+        mm->client->recentMessages++;
+        if (mm->cpr_valid) {
+            mm->client->recentPositions++;
+        }
+        if (mm->client->unreasonable_messagerate) {
+            res = NULL;
+            goto exit;
+        }
+    }
+
+    if (0) {
+        static int64_t lastPrint;
+        static int msgAcc;
+        int64_t printIval = 50;
+
+        msgAcc++;
+
+        if (now > lastPrint + printIval) {
+            int64_t elapsed = now - lastPrint;
+            double rate = msgAcc / (elapsed * 0.001);
+            int width = rate / 20;
+
+            unsigned char bar[1024];
+            for (int i = 0; i < (int) sizeof(bar); i++) {
+                bar[i] = 219; // ascii block
+            }
+
+            if (width >= (int) sizeof(bar)) {
+                width = (int) sizeof(bar) - 1;
+            }
+            bar[width] = '\0';
+
+            fprintTimePrecise(stderr, now);
+            fprintf(stderr, " %4d %s\n", (int) rate, bar);
+            //fprintf(stderr, "%5.0f\n", rate / 100);
+            lastPrint = now;
+            msgAcc = 0;
+        }
+    }
+
+
+    struct aircraft *a;
+    unsigned int cpr_new = 0;
+    mm->calculated_track = -1;
+
+    mm->address_reliable = addressReliable(mm);
+
+    // Lookup our aircraft or create a new one
+    a = aircraftGet(mm->addr);
+    if (!a) { // If it's a currently unknown aircraft....
+        if (mm->address_reliable) {
+            a = aircraftCreate(mm->addr); // ., create a new record for it,
+        } else {
+            //fprintf(stderr, "%06x: !a && !addressReliable(mm)\n", mm->addr);
+            res = NULL;
+            goto exit;
+        }
+    }
+
+    struct aircraft scratch;
+    bool haveScratch = false;
+    if (mm->cpr_valid || mm->sbs_pos_valid) {
+        memcpy(&scratch, a, offsetof(struct aircraft, traceCache));
+        haveScratch = true;
+        // messages from receivers classified garbage with position get processed to see if they still send garbage
+    } else if (mm->garbage) {
+        res = NULL;
+        goto exit;
+    }
+
+    // only count the aircraft as "seen" for reliable messages with CRC
+    if (mm->address_reliable) {
+        int64_t elapsed_seen = now - a->seen;
+        if (elapsed_seen > 5 * MINUTES) {
+            Modes.stats_current.unique_aircraft++;
+            if (
+                    (elapsed_seen > 15 * MINUTES && a->addrtype != ADDR_JAERO)
+                    || (elapsed_seen > Modes.trackExpireJaero && a->addrtype == ADDR_JAERO)
+               ) {
+                // if an aircraft hasn't been active in a bit, reset its message count
+                a->messages = 0;
+            }
+        }
+
+        a->seen = now;
+
+        if (now - a->seen_pos > 500 * RECEIVERIDBUFFER) {
+            addReceiverId(a, mm, elapsed_seen);
+        }
+    }
+
+    // don't use messages with unreliable CRC too long after receiving a reliable address from an aircraft
+    if (now - a->seen > TRACK_STALE) {
+        res = NULL;
+        goto exit;
+    }
+
+    a->last_message_crc_fixed = (mm->correctedbits > 0) ? 1 : 0;
+
+
+    a->messageRateAcc[0]++;
+    if (now > a->nextMessageRateCalc) {
+        calculateMessageRate(a, now);
+    }
+
+    if (mm->signalLevel > 0) {
+
+        a->signalLevel[a->signalNext % 8] = mm->signalLevel;
+        a->signalNext++;
+        //fprintf(stderr, "%0.4f\n",mm->signalLevel);
+
+        a->lastSignalTimestamp = now;
+    } else {
+        //fprintf(stderr, "signal zero: %06x; %s\n", a->addr, source_string(mm->source));
+        // if we haven't received a message with signal level for a bit, set it to zero
+        if (now - a->lastSignalTimestamp > 15 * SECONDS && a->signalNext > 0) {
+            a->signalNext = 0;
+            //fprintf(stderr, "no_sig_thresh: %06x; %d; %d\n", a->addr, (int) a->no_signal_count, (int) a->signalNext);
+        }
+    }
+
+    // reset to 100000 on overflow ... avoid any low message count checks
+    if (a->messages == UINT32_MAX)
+        a->messages = UINT16_MAX;
+
+    a->messages++;
+
+    // update addrtype
+    float newType = mm->addrtype == ADDR_MODE_S ? 4.5 : mm->addrtype;
+    float oldType = a->addrtype == ADDR_MODE_S ? 4.5 : a->addrtype;
+    // change type ranking without messing with enum :/
+    if (
+            (newType <= oldType && now - a->addrtype_updated > TRACK_EXPIRE * 3 / 4)
+            || (newType > oldType && now - a->addrtype_updated > TRACK_EXPIRE * 3 / 2)
+       ) {
+
+        if (mm->addrtype == ADDR_ADSB_ICAO && a->position_valid.source != SOURCE_ADSB) {
+            // don't set to ADS-B without a position
+            if (mm->msgtype == 17) {
+                a->addrtype = ADDR_MODE_S; // set type ModeS for DF17 messages when not knowing position
+                a->addrtype_updated = now;
+            }
+        } else {
+            a->addrtype = mm->addrtype;
+            a->addrtype_updated = now;
+        }
+
+        if (a->addrtype > ADDR_ADSB_ICAO_NT) {
+            a->adsb_version = -1; // reset ADS-B version if a non ADS-B message type is received
+        }
+    }
+
+    // decide on where to stash the version
+    int dummy_version = -1; // used for non-adsb/adsr/tisb messages
+    int *message_version;
+
+    switch (mm->source) {
+    case SOURCE_ADSB:
+        message_version = &a->adsb_version;
+        break;
+    case SOURCE_TISB:
+        message_version = &a->tisb_version;
+        break;
+    case SOURCE_ADSR:
+        message_version = &a->adsr_version;
+        break;
+    default:
+        message_version = &dummy_version;
+        break;
+    }
+
+    // assume version 0 until we see something else
+    if (*message_version < 0) {
+        *message_version = 0;
+    }
+
+    mergeValidatedFields(a, mm, now, message_version);
 
     if (mm->cpr_valid && accept_cpr(a, mm)) {
         cpr_new = 1;
@@ -2660,14 +2672,8 @@ struct aircraft *trackUpdateFromMessage(struct modesMessage *mm) {
 
     if (mm->sbs_in && mm->sbs_pos_valid) {
         int old_jaero = 0;
-        if (mm->source == SOURCE_JAERO && a->trace_len > 0) {
-            spinLock(&a->traceLock);
-            for (int i = imax(0, a->trace_current_len - 10); i < a->trace_current_len; i++) {
-                if ( (int32_t) (mm->decoded_lat * 1E6) == getState(a->trace_current, i)->lat
-                        && (int32_t) (mm->decoded_lon * 1E6) == getState(a->trace_current, i)->lon )
-                    old_jaero = 1;
-            }
-            spinRelease(&a->traceLock);
+        if (mm->source == SOURCE_JAERO) {
+            old_jaero = traceHasRecentDuplicate(a, (int32_t) (mm->decoded_lat * 1E6), (int32_t) (mm->decoded_lon * 1E6));
         }
         if (Modes.maxRange > 0 && Modes.userLocationValid) {
             mm->receiver_distance = greatcircle(Modes.fUserLat, Modes.fUserLon, mm->decoded_lat, mm->decoded_lon, 0);

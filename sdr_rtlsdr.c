@@ -106,17 +106,17 @@ static int getClosestGainIndex(int target) {
 }
 
 void rtlsdrSetGain(char *reason) {
-    if (RTLSDR.use_rtl_agc && (Modes.gain == MODES_AUTO_GAIN || Modes.gain >= 520)) {
-        Modes.gain = MODES_RTL_AGC;
+    if (RTLSDR.use_rtl_agc && (SdrConfig.gain == MODES_AUTO_GAIN || SdrConfig.gain >= 520)) {
+        SdrConfig.gain = MODES_RTL_AGC;
     }
 
-    if (Modes.increaseGain || Modes.lowerGain) {
-        int closest = getClosestGainIndex(Modes.gain);
-        if (Modes.increaseGain) {
-            closest += Modes.increaseGain;
+    if (SdrConfig.increaseGain || SdrConfig.lowerGain) {
+        int closest = getClosestGainIndex(SdrConfig.gain);
+        if (SdrConfig.increaseGain) {
+            closest += SdrConfig.increaseGain;
         }
-        if (Modes.lowerGain) {
-            closest -= Modes.lowerGain;
+        if (SdrConfig.lowerGain) {
+            closest -= SdrConfig.lowerGain;
         }
         if (closest >= RTLSDR.numgains) {
             closest = RTLSDR.numgains - 1;
@@ -124,30 +124,30 @@ void rtlsdrSetGain(char *reason) {
         if (closest < 0) {
             closest = 0;
         }
-        Modes.increaseGain = 0;
-        Modes.lowerGain = 0;
+        SdrConfig.increaseGain = 0;
+        SdrConfig.lowerGain = 0;
 
-        if (RTLSDR.gains[closest] < Modes.minGain) {
+        if (RTLSDR.gains[closest] < SdrConfig.minGain) {
             // new gain less than minimum, nothing to do
             return;
         }
-        if (Modes.gain == RTLSDR.gains[closest]) {
+        if (SdrConfig.gain == RTLSDR.gains[closest]) {
             // same gain, nothing to do
             return;
         }
 
         // change gain
-        Modes.gain = RTLSDR.gains[closest];
+        SdrConfig.gain = RTLSDR.gains[closest];
     }
 
-    if (Modes.gain < 0) {
-        Modes.gain = 0;
+    if (SdrConfig.gain < 0) {
+        SdrConfig.gain = 0;
     }
 
-    if (RTLSDR.use_rtl_agc && Modes.gain == MODES_RTL_AGC) {
+    if (RTLSDR.use_rtl_agc && SdrConfig.gain == MODES_RTL_AGC) {
 
         RTLSDR.tunerAgcEnabled = 1;
-        if (!Modes.gainQuiet) {
+        if (!SdrConfig.gainQuiet) {
             fprintf(stderr, "%srtlsdr: tuner gain set to 59.0 dB (tuner AGC)\n", reason);
         }
         if (rtlsdr_set_tuner_gain_mode(RTLSDR.dev, 0)) {
@@ -156,7 +156,7 @@ void rtlsdrSetGain(char *reason) {
         }
     } else {
 
-        int closest = getClosestGainIndex(Modes.gain);
+        int closest = getClosestGainIndex(SdrConfig.gain);
         int newGain = RTLSDR.gains[closest];
 
         if (RTLSDR.tunerAgcEnabled) {
@@ -171,10 +171,10 @@ void rtlsdrSetGain(char *reason) {
             fprintf(stderr, "rtlsdr: setting tuner gain failed\n");
             return;
         } else {
-            if (!Modes.gainQuiet) {
+            if (!SdrConfig.gainQuiet) {
                 fprintf(stderr, "%srtlsdr: tuner gain set to %4.1f dB\n", reason, newGain / 10.0);
             }
-            Modes.gain = newGain;
+            SdrConfig.gain = newGain;
         }
     }
 }
@@ -258,9 +258,9 @@ bool rtlsdrOpen(void) {
     }
 
     int dev_index = 0;
-    if (Modes.dev_name) {
-        if ((dev_index = find_device_index(Modes.dev_name)) < 0) {
-            fprintf(stderr, "FATAL: rtlsdr: no device matching '%s' found.\n", Modes.dev_name);
+    if (SdrConfig.dev_name) {
+        if ((dev_index = find_device_index(SdrConfig.dev_name)) < 0) {
+            fprintf(stderr, "FATAL: rtlsdr: no device matching '%s' found.\n", SdrConfig.dev_name);
             show_rtlsdr_devices();
             return false;
         }
@@ -324,18 +324,18 @@ bool rtlsdrOpen(void) {
     // Set frequency, sample rate, and reset the device
 
     rtlsdr_set_freq_correction(RTLSDR.dev, RTLSDR.ppm_error);
-    rtlsdr_set_center_freq(RTLSDR.dev, Modes.freq);
+    rtlsdr_set_center_freq(RTLSDR.dev, SdrConfig.freq);
     rtlsdr_set_sample_rate(RTLSDR.dev, (unsigned) Modes.sample_rate);
 #ifdef ENABLE_RTLSDR_BIASTEE
     // Enable or disable bias tee on GPIO pin 0. (Works only for rtl-sdr.com v3 dongles)
-    rtlsdr_set_bias_tee(RTLSDR.dev, Modes.biastee);
+    rtlsdr_set_bias_tee(RTLSDR.dev, SdrConfig.biastee);
 #endif
 
     rtlsdr_reset_buffer(RTLSDR.dev);
 
     RTLSDR.converter = init_converter(INPUT_UC8,
             Modes.sample_rate,
-            Modes.dc_filter,
+            SdrConfig.dc_filter,
             &RTLSDR.converter_state);
     if (!RTLSDR.converter) {
         fprintf(stderr, "FATAL: rtlsdr: can't initialize sample converter\n");
@@ -344,7 +344,7 @@ bool rtlsdrOpen(void) {
     }
 
 #ifdef USE_BOUNCE_BUFFER
-    if (!(RTLSDR.bounce_buffer = cmalloc(Modes.sdr_buf_size))) {
+    if (!(RTLSDR.bounce_buffer = cmalloc(SdrConfig.sdr_buf_size))) {
         fprintf(stderr, "FATAL: rtlsdr: can't allocate bounce buffer\n");
         rtlsdrClose();
         return false;
@@ -394,16 +394,16 @@ void rtlsdrCallback(unsigned char *buf, uint32_t len, void *ctx) {
 
     unlockReader();
 
-    if (len != Modes.sdr_buf_size) {
+    if (len != SdrConfig.sdr_buf_size) {
         static int64_t antiSpam;
         if (mstime() > antiSpam) {
             antiSpam = mstime() + 10 * SECONDS;
             fprintf(stderr, "weirdness: rtlsdr gave us a block with an unusual size (got %u bytes, expected %u bytes), suppressing this message for 10 seconds\n",
-                    (unsigned) len, (unsigned) Modes.sdr_buf_size);
+                    (unsigned) len, (unsigned) SdrConfig.sdr_buf_size);
         }
-        if (len > Modes.sdr_buf_size) {
+        if (len > SdrConfig.sdr_buf_size) {
             // wat?! Discard the start.
-            unsigned discard = (len - Modes.sdr_buf_size + 1) / 2;
+            unsigned discard = (len - SdrConfig.sdr_buf_size + 1) / 2;
             outbuf->dropped += discard;
             buf += discard * 2;
             len -= discard * 2;
@@ -485,7 +485,7 @@ void rtlsdrRun() {
 
     start_cpu_timing(&rtlsdr_thread_cpu);
 
-    rtlsdr_read_async(RTLSDR.dev, rtlsdrCallback, NULL, MODES_RTL_BUFFERS, Modes.sdr_buf_size);
+    rtlsdr_read_async(RTLSDR.dev, rtlsdrCallback, NULL, MODES_RTL_BUFFERS, SdrConfig.sdr_buf_size);
     if (!Modes.exit) {
         fprintf(stderr,"FATAL: rtlsdr_read_async returned unexpectedly, probably lost the USB device, bailing out\n");
     }

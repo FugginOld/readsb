@@ -168,8 +168,8 @@ bool ubladeRFOpen() {
     int status;
 
     bladerf_set_usb_reset_on_open(true);
-    fprintf(stderr, "Opening BladeRF: %s\n", Modes.dev_name);
-    if ((status = bladerf_open(&uBladeRF.device, Modes.dev_name)) < 0) {
+    fprintf(stderr, "Opening BladeRF: %s\n", SdrConfig.dev_name);
+    if ((status = bladerf_open(&uBladeRF.device, SdrConfig.dev_name)) < 0) {
         fprintf(stderr, "Failed to open bladeRF: %s\n", bladerf_strerror(status));
         goto error;
     }
@@ -223,7 +223,7 @@ bool ubladeRFOpen() {
 
     // Close and re-open the bladeRF, otherwise we get "An unexpected error occurred" in later calls.
     bladerf_close(uBladeRF.device);
-    if ((status = bladerf_open(&uBladeRF.device, Modes.dev_name)) < 0) {
+    if ((status = bladerf_open(&uBladeRF.device, SdrConfig.dev_name)) < 0) {
         fprintf(stderr, "Failed to open bladeRF: %s\n", bladerf_strerror(status));
         goto error;
     }
@@ -233,7 +233,7 @@ bool ubladeRFOpen() {
         goto error;
     }
 
-    if ((status = bladerf_set_frequency(uBladeRF.device, BLADERF_MODULE_RX, Modes.freq)) < 0) {
+    if ((status = bladerf_set_frequency(uBladeRF.device, BLADERF_MODULE_RX, SdrConfig.freq)) < 0) {
         fprintf(stderr, "bladerf_set_frequency failed: %s\n", bladerf_strerror(status));
         goto error;
     }
@@ -257,7 +257,7 @@ bool ubladeRFOpen() {
     }
 
     /* Gain = -100 is AGC */
-    if (Modes.gain == -100) {
+    if (SdrConfig.gain == -100) {
         fprintf(stderr, "BladeRF: using AGC\n");
         /* Note: we should really query the BladeRF library to find out what modes we are allowed to use */
         if ((status = bladerf_set_gain_mode(uBladeRF.device, BLADERF_MODULE_RX, BLADERF_GAIN_DEFAULT)) < 0) {
@@ -267,15 +267,15 @@ bool ubladeRFOpen() {
         if ((status = bladerf_set_gain_mode(uBladeRF.device, BLADERF_MODULE_RX, BLADERF_GAIN_MGC)) < 0) {
             fprintf(stderr, "bladerf_set_gain_mode to manual failed: %s\n", bladerf_strerror(status));
         }
-        fprintf(stderr, "BladeRF: setting manual gain to %d\n", Modes.gain / 10);
-        if ((status = bladerf_set_gain(uBladeRF.device, BLADERF_MODULE_RX, Modes.gain / 10)) < 0) {
+        fprintf(stderr, "BladeRF: setting manual gain to %d\n", SdrConfig.gain / 10);
+        if ((status = bladerf_set_gain(uBladeRF.device, BLADERF_MODULE_RX, SdrConfig.gain / 10)) < 0) {
             fprintf(stderr, "bladerf_set_gain(RX) failed: %s\n", bladerf_strerror(status));
             goto error;
         }
     }
 
     if (!strcmp("bladerf2", bladerf_get_board_name(uBladeRF.device))) {
-        if (Modes.biastee) {
+        if (SdrConfig.biastee) {
             // Note: the BladeRF micro enables/disables on both RX channels at the same time
             fprintf(stderr, "Enabling Bias on RX channels\n");
             if ((status = bladerf_set_bias_tee(uBladeRF.device, BLADERF_CHANNEL_RX(0), true)) < 0) {
@@ -310,7 +310,7 @@ bool ubladeRFOpen() {
 
     uBladeRF.converter = init_converter(INPUT_SC16Q11,
             Modes.sample_rate,
-            Modes.dc_filter,
+            SdrConfig.dc_filter,
             &uBladeRF.converter_state);
     if (!uBladeRF.converter) {
         fprintf(stderr, "can't initialize sample converter\n");
@@ -389,7 +389,7 @@ static void *handle_bladerf_samples(struct bladerf *dev,
 
     static bool overrun = true; // ignore initial overruns as we get up to speed
     static bool first_buffer = true;
-    for (unsigned offset = 0; offset < Modes.sdr_buf_samples * 4; offset += uBladeRF.block_size) {
+    for (unsigned offset = 0; offset < SdrConfig.sdr_buf_samples * 4; offset += uBladeRF.block_size) {
         // read the next metadata header
         uint8_t *header = ((uint8_t*) samples) + offset;
         uint64_t metadata_magic = le32toh(*(uint32_t*) (header));
@@ -492,14 +492,14 @@ void ubladeRFRun() {
             &buffers,
             /* num_buffers */ transfers,
             BLADERF_FORMAT_SC16_Q11_META,
-            /* samples_per_buffer */ Modes.sdr_buf_samples,
+            /* samples_per_buffer */ SdrConfig.sdr_buf_samples,
             /* num_transfers */ transfers,
             /* user_data */ NULL)) < 0) {
         fprintf(stderr, "bladerf_init_stream() failed: %s\n", bladerf_strerror(status));
         goto out;
     }
 
-    unsigned ms_per_transfer = 1000 * Modes.sdr_buf_samples / Modes.sample_rate;
+    unsigned ms_per_transfer = 1000 * SdrConfig.sdr_buf_samples / Modes.sample_rate;
     if ((status = bladerf_set_stream_timeout(uBladeRF.device, BLADERF_MODULE_RX, ms_per_transfer * (transfers + 2))) < 0) {
         fprintf(stderr, "bladerf_set_stream_timeout() failed: %s\n", bladerf_strerror(status));
         goto out;

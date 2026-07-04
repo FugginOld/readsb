@@ -79,7 +79,7 @@ void display_stats(struct stats *st) {
 
     printf("Statistics: %s - %s\n", tb_start, tb_end);
 
-    if (Modes.sdr_type != SDR_NONE) {
+    if (SdrConfig.sdr_type != SDR_NONE) {
         printf("Local receiver:\n");
         printf("  %llu samples processed\n", (unsigned long long) st->samples_processed);
         printf("  %llu samples dropped\n", (unsigned long long) st->samples_dropped);
@@ -505,7 +505,7 @@ static char * appendStatsJson(char *p, char *end, struct stats *st, const char *
             st->start / 1000.0,
             st->end / 1000.0);
 
-    if (Modes.sdr_type != SDR_NONE) {
+    if (SdrConfig.sdr_type != SDR_NONE) {
         p = safe_snprintf(p, end,
                 ",\"local\":{\"samples_processed\":%llu"
                 ",\"samples_dropped\":%llu"
@@ -707,8 +707,8 @@ struct char_buffer generateStatsJson(int64_t now) {
             now / 1000.0);
 
     if (!Modes.net_only) {
-        p = safe_snprintf(p, end, ", \"gain_db\" : %.1f", Modes.gain / 10.0);
-        p = safe_snprintf(p, end, ", \"estimated_ppm\" : %.1f", Modes.estimated_ppm);
+        p = safe_snprintf(p, end, ", \"gain_db\" : %.1f", SdrConfig.gain / 10.0);
+        p = safe_snprintf(p, end, ", \"estimated_ppm\" : %.1f", SdrConfig.estimated_ppm);
     }
 
     if (Modes.bad_tuner) {
@@ -864,9 +864,9 @@ struct char_buffer generatePromFile(int64_t now) {
                 con->address, con->port, value);
     }
 
-    if (Modes.sdr_type != SDR_NONE) {
+    if (SdrConfig.sdr_type != SDR_NONE) {
         if (!Modes.net_only) {
-            p = safe_snprintf(p, end, "readsb_sdr_gain %.1f\n", Modes.gain / 10.0);
+            p = safe_snprintf(p, end, "readsb_sdr_gain %.1f\n", SdrConfig.gain / 10.0);
         }
 
         if (st->signal_power_sum > 0 && st->signal_power_count > 0)
@@ -888,7 +888,7 @@ struct char_buffer generatePromFile(int64_t now) {
             p = safe_snprintf(p, end, "readsb_demod_samples_processed %"PRIu64"\n", st->samples_processed);
             p = safe_snprintf(p, end, "readsb_demod_samples_dropped %"PRIu64"\n", st->samples_dropped);
             p = safe_snprintf(p, end, "readsb_demod_samples_lost %"PRIu64"\n", st->samples_lost);
-            p = safe_snprintf(p, end, "readsb_demod_estimated_ppm %.1f\n", Modes.estimated_ppm);
+            p = safe_snprintf(p, end, "readsb_demod_estimated_ppm %.1f\n", SdrConfig.estimated_ppm);
 
             p = safe_snprintf(p, end, "readsb_demod_preambles %"PRIu32"\n", st->demod_preambles);
         }
@@ -948,7 +948,7 @@ void statsCountAircraft(int64_t now) {
 
             if (Modes.keep_traces && a->trace_current_len > 0) {
                 trace_current_size += stateBytes(a->trace_current_max);
-                trace_chunk_size += a->trace_chunk_overall_bytes;
+                trace_chunk_size += traceChunkBytes(a);
                 trace_last_size += stateBytes(Modes.traceLastMax);
                 struct traceCache *tCache = &a->traceCache;
                 if (tCache->entries) {

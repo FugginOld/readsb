@@ -280,7 +280,7 @@ void demodulate2400(struct mag_buf *mag) {
     msg = msg1;
 
     // advance ifile artificial clock even if we don't receive anything
-    if (Modes.sdr_type == SDR_IFILE && Modes.synthetic_now) {
+    if (SdrConfig.sdr_type == SDR_IFILE && Modes.synthetic_now) {
         Modes.synthetic_now = mag->sysTimestamp;
     }
 
@@ -318,7 +318,7 @@ void demodulate2400(struct mag_buf *mag) {
         // due to plenty room in the message buffer for decoding
         // we can with pa go beyond stop without a buffer overrun ...
 
-        if (Modes.autoGain && pa >= statsProgress) {
+        if (SdrConfig.autoGain && pa >= statsProgress) {
             uint32_t magSum = 0;
             for (uint32_t i = 0; i < statsWindow; i++) {
                 magSum += pa[i];
@@ -431,7 +431,7 @@ after_pre:
         mm->sysTimestamp = mag->sysTimestamp + receiveclock_ms_elapsed(mag->sampleTimestamp, mm->timestamp);
 
         // advance ifile artifical clock for every message received
-        if (Modes.sdr_type == SDR_IFILE && Modes.synthetic_now) {
+        if (SdrConfig.sdr_type == SDR_IFILE && Modes.synthetic_now) {
             Modes.synthetic_now = mm->sysTimestamp;
         }
 

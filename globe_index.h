@@ -56,6 +56,11 @@ int traceAdd(struct aircraft *a, struct modesMessage *mm, int64_t now, int stale
 int traceUsePosBuffered(struct aircraft *a);
 void traceMaintenance(struct aircraft *a, int64_t now, threadpool_buffer_t *passbuffer);
 
+struct traceHistory *traceHistoryCreate(void);
+void traceHistoryDestroy(struct traceHistory *th);
+uint32_t traceChunkBytes(const struct aircraft *a);
+int traceHasRecentDuplicate(struct aircraft *a, int32_t lat, int32_t lon);
+
 int handleHeatmap(int64_t now);
 
 struct craftArray {

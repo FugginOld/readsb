@@ -309,6 +309,10 @@ struct traceCache {
     char *json;
 };
 
+// compressed trace chunks + disk-persistence bookkeeping, owned by globe_index.c.
+// definition is private to globe_index.c -- this is a forward declaration only.
+struct traceHistory;
+
 /* Structure used to describe the state of one tracked aircraft */
 struct aircraft
 {
@@ -327,18 +331,14 @@ struct aircraft
 
   // ----
 
-  int64_t trace_next_mw; // timestamp for next full trace write to /run (tmpfs)
-  int64_t trace_next_perm; // timestamp for next trace write to history_dir (disk)
   int64_t lastSignalTimestamp; // timestamp the last message with RSSI was received
-  int64_t trace_perm_last_timestamp; // timestamp for last trace point written to disk
 
   fourState *trace_current; // uncompressed most recent points in the trace
-  stateChunk *trace_chunks; // compressed chunks of trace
+  struct traceHistory *traceHistory; // compressed trace chunks + disk-persistence bookkeeping, opaque, owned by globe_index.c
 
   int32_t trace_current_max;
   int32_t trace_current_len; // number of points in our uncompressed most recent trace portion
   int32_t trace_len; // total number of points in the trace
-  int32_t trace_chunk_len; // how many stateChunks are saved for this aircraft
   int32_t trace_write; // signal for writing the trace
 
   int32_t trace_writeCounter; // how many points where added since the complete trace was written to memory
@@ -584,7 +584,6 @@ struct aircraft
 
   int8_t initialTraceWriteDone;
   atomic_int traceLock;
-  uint32_t trace_chunk_overall_bytes;
 
   float messageRate;
   uint16_t messageRateAcc[MESSAGE_RATE_CALC_POINTS];
@@ -719,6 +718,8 @@ void trackRemoveStale(int64_t now);
 void updateValidities(struct aircraft *a, int64_t now);
 
 struct aircraft *trackFindAircraft(uint32_t addr);
+
+void trackTouchSeen(struct aircraft *a, int64_t now);
 
 /* Convert from a (hex) mode A value to a 0-4095 index */
 static inline unsigned

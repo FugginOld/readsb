@@ -44,6 +44,8 @@
 
 #include "sdr_beast.h"
 
+struct sdrConfig SdrConfig;
+
 #define SDR_TIMEOUT 5000 // timeout for sdr open / cancel / close calls in milliseconds
 
 typedef struct {
@@ -124,7 +126,7 @@ static sdr_handler sdr_handlers[] = {
 void sdrInitConfig() {
     // Default SDR is the first type available in the handlers array.
     // rather don't have a default SDR ....
-    // Modes.sdr_type = sdr_handlers[0].sdr_type;
+    // SdrConfig.sdr_type = sdr_handlers[0].sdr_type;
 
     for (int i = 0; sdr_handlers[i].name; ++i) {
         sdr_handlers[i].initConfig();
@@ -136,14 +138,14 @@ bool sdrHandleOption(int key, char *arg) {
         case OptDeviceType:
             for (int i = 0; sdr_handlers[i].name; ++i) {
                 if (!strcasecmp(sdr_handlers[i].name, arg)) {
-                    Modes.sdr_type = sdr_handlers[i].sdr_type;
+                    SdrConfig.sdr_type = sdr_handlers[i].sdr_type;
                     return true;
                 }
             }
             break;
         default:
             for (int i = 0; sdr_handlers[i].sdr_type; ++i) {
-                if (Modes.sdr_type == sdr_handlers[i].sdr_type) {
+                if (SdrConfig.sdr_type == sdr_handlers[i].sdr_type) {
                     return sdr_handlers[i].handleOption(key, arg);
                 }
             }
@@ -161,7 +163,7 @@ static sdr_handler *current_handler() {
     static sdr_handler unsupported_handler = {noInitConfig, noHandleOption, unsupportedOpen, noRun, noCancel, noClose, "unsupported", SDR_NONE, 0, noSetGain};
 
     for (int i = 0; sdr_handlers[i].name; ++i) {
-        if (Modes.sdr_type == sdr_handlers[i].sdr_type) {
+        if (SdrConfig.sdr_type == sdr_handlers[i].sdr_type) {
             return &sdr_handlers[i];
         }
     }
@@ -175,12 +177,12 @@ static sdr_handler *current_handler() {
 //
 
 bool sdrOpen() {
-    pthread_mutex_lock(&Modes.sdrControlMutex);
+    pthread_mutex_lock(&SdrConfig.sdrControlMutex);
     bool success = current_handler()->open();
     if (success) {
-        Modes.sdrInitialized = 1;
+        SdrConfig.sdrInitialized = 1;
     }
-    pthread_mutex_unlock(&Modes.sdrControlMutex);
+    pthread_mutex_unlock(&SdrConfig.sdrControlMutex);
     return success;
 }
 
@@ -194,31 +196,31 @@ void sdrRun() {
 }
 
 void sdrCancel() {
-    pthread_mutex_lock(&Modes.sdrControlMutex);
-    Modes.sdrInitialized = 0;
+    pthread_mutex_lock(&SdrConfig.sdrControlMutex);
+    SdrConfig.sdrInitialized = 0;
 
     current_handler()->cancel();
 
-    pthread_mutex_unlock(&Modes.sdrControlMutex);
+    pthread_mutex_unlock(&SdrConfig.sdrControlMutex);
 }
 
 void sdrClose() {
-    pthread_mutex_lock(&Modes.sdrControlMutex);
+    pthread_mutex_lock(&SdrConfig.sdrControlMutex);
 
-    Modes.sdrInitialized = 0;
+    SdrConfig.sdrInitialized = 0;
     current_handler()->close();
 
-    pthread_mutex_unlock(&Modes.sdrControlMutex);
+    pthread_mutex_unlock(&SdrConfig.sdrControlMutex);
 }
 
 void sdrSetGain(char *reason){
-    pthread_mutex_lock(&Modes.sdrControlMutex);
+    pthread_mutex_lock(&SdrConfig.sdrControlMutex);
 
-    if (Modes.sdrInitialized) {
+    if (SdrConfig.sdrInitialized) {
         current_handler()->setGain(reason);
     }
 
-    pthread_mutex_unlock(&Modes.sdrControlMutex);
+    pthread_mutex_unlock(&SdrConfig.sdrControlMutex);
 }
 
 void lockReader() {

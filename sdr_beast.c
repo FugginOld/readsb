@@ -162,7 +162,7 @@ bool beastOpen(void) {
     tios.c_cc[VMIN] = 0; // polling read with vtime 0
     tios.c_cc[VTIME] = 0;
 
-    if (Modes.sdr_type == SDR_GNS) {
+    if (SdrConfig.sdr_type == SDR_GNS) {
         baud = B921600;
     }
 
@@ -200,7 +200,7 @@ bool beastOpen(void) {
         return false;
     }
 
-    if (Modes.sdr_type == SDR_MODESBEAST) {
+    if (SdrConfig.sdr_type == SDR_MODESBEAST) {
         /* set options */
         beastSetOption('B'); /* set classic beast mode */
         beastSetOption('C'); /* use binary format */
@@ -238,7 +238,7 @@ bool beastOpen(void) {
     }
 
     // Request firmware message from GNS HULC
-    if (Modes.sdr_type == SDR_GNS) {
+    if (SdrConfig.sdr_type == SDR_GNS) {
         char optionsmsg[4] = {'#', '0', '0', '\r'};
         if (write(Modes.beast_fd, optionsmsg, 4) < 4) {
             fprintf(stderr, "GNS HULC request firmware failed: %s\n", strerror(errno));
@@ -253,7 +253,7 @@ bool beastOpen(void) {
         return false;
     }
 
-    if (Modes.sdr_type == SDR_MODESBEAST) {
+    if (SdrConfig.sdr_type == SDR_MODESBEAST) {
         fprintf(stderr, "Running Mode-S Beast via serial (over USB).\n");
     } else {
         fprintf(stderr, "Running GNS HULC via serial (over USB).\n");

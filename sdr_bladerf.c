@@ -158,7 +158,7 @@ bool bladeRFOpen() {
     int status;
 
     bladerf_set_usb_reset_on_open(true);
-    if ((status = bladerf_open(&BladeRF.device, Modes.dev_name)) < 0) {
+    if ((status = bladerf_open(&BladeRF.device, SdrConfig.dev_name)) < 0) {
         fprintf(stderr, "Failed to open bladeRF: %s\n", bladerf_strerror(status));
         goto error;
     }
@@ -212,7 +212,7 @@ bool bladeRFOpen() {
         goto error;
     }
 
-    if ((status = bladerf_set_frequency(BladeRF.device, BLADERF_MODULE_RX, Modes.freq)) < 0) {
+    if ((status = bladerf_set_frequency(BladeRF.device, BLADERF_MODULE_RX, SdrConfig.freq)) < 0) {
         fprintf(stderr, "bladerf_set_frequency failed: %s\n", bladerf_strerror(status));
         goto error;
     }
@@ -233,7 +233,7 @@ bool bladeRFOpen() {
         goto error;
     }
 
-    if ((status = bladerf_set_gain(BladeRF.device, BLADERF_MODULE_RX, Modes.gain / 10.0)) < 0) {
+    if ((status = bladerf_set_gain(BladeRF.device, BLADERF_MODULE_RX, SdrConfig.gain / 10.0)) < 0) {
         fprintf(stderr, "bladerf_set_gain(RX) failed: %s\n", bladerf_strerror(status));
         goto error;
     }
@@ -262,7 +262,7 @@ bool bladeRFOpen() {
 
     BladeRF.converter = init_converter(INPUT_SC16Q11,
             Modes.sample_rate,
-            Modes.dc_filter,
+            SdrConfig.dc_filter,
             &BladeRF.converter_state);
     if (!BladeRF.converter) {
         fprintf(stderr, "can't initialize sample converter\n");
@@ -341,7 +341,7 @@ static void *handle_bladerf_samples(struct bladerf *dev,
 
     static bool overrun = true; // ignore initial overruns as we get up to speed
     static bool first_buffer = true;
-    for (unsigned offset = 0; offset < Modes.sdr_buf_samples * 4; offset += BladeRF.block_size) {
+    for (unsigned offset = 0; offset < SdrConfig.sdr_buf_samples * 4; offset += BladeRF.block_size) {
         // read the next metadata header
         uint8_t *header = ((uint8_t*) samples) + offset;
         uint64_t metadata_magic = le32toh(*(uint32_t*) (header));
@@ -444,14 +444,14 @@ void bladeRFRun() {
             &buffers,
             /* num_buffers */ transfers,
             BLADERF_FORMAT_SC16_Q11_META,
-            /* samples_per_buffer */ Modes.sdr_buf_samples,
+            /* samples_per_buffer */ SdrConfig.sdr_buf_samples,
             /* num_transfers */ transfers,
             /* user_data */ NULL)) < 0) {
         fprintf(stderr, "bladerf_init_stream() failed: %s\n", bladerf_strerror(status));
         goto out;
     }
 
-    unsigned ms_per_transfer = 1000 * Modes.sdr_buf_samples / Modes.sample_rate;
+    unsigned ms_per_transfer = 1000 * SdrConfig.sdr_buf_samples / Modes.sample_rate;
     if ((status = bladerf_set_stream_timeout(BladeRF.device, BLADERF_MODULE_RX, ms_per_transfer * (transfers + 2))) < 0) {
         fprintf(stderr, "bladerf_set_stream_timeout() failed: %s\n", bladerf_strerror(status));
         goto out;

@@ -157,7 +157,7 @@ static void soapyShowAllDevices()
 bool soapyOpen(void)
 {
     size_t length = 0;
-    SoapySDRKwargs *results = SoapySDRDevice_enumerateStrArgs(Modes.dev_name ? Modes.dev_name : "", &length);
+    SoapySDRKwargs *results = SoapySDRDevice_enumerateStrArgs(SdrConfig.dev_name ? SdrConfig.dev_name : "", &length);
 
     if (length == 0) {
         SoapySDRKwargsList_clear(results, length);
@@ -182,7 +182,7 @@ bool soapyOpen(void)
     fprintf(stderr, "\n");
     SoapySDRKwargsList_clear(results, length);
 
-    SOAPY.dev = SoapySDRDevice_makeStrArgs(Modes.dev_name ? Modes.dev_name : "");
+    SOAPY.dev = SoapySDRDevice_makeStrArgs(SdrConfig.dev_name ? SdrConfig.dev_name : "");
     if (!SOAPY.dev) {
         fprintf(stderr, "soapy: failed to create device: %s\n", SoapySDRDevice_lastError());
         return false;
@@ -261,7 +261,7 @@ bool soapyOpen(void)
         goto error;
     }
 
-    if (SoapySDRDevice_setFrequency(SOAPY.dev, SOAPY_SDR_RX, SOAPY.channel, Modes.freq, NULL) != 0) {
+    if (SoapySDRDevice_setFrequency(SOAPY.dev, SOAPY_SDR_RX, SOAPY.channel, SdrConfig.freq, NULL) != 0) {
         fprintf(stderr, "soapy: setFrequency failed: %s\n", SoapySDRDevice_lastError());
         goto error;
     }
@@ -296,8 +296,8 @@ bool soapyOpen(void)
             }
         }
 
-        //double gain = (Modes.gain == MODES_DEFAULT_GAIN ? SOAPY.gain_range.maximum : Modes.gain);
-        double gain = (Modes.gain == MODES_MAX_GAIN ? SOAPY.gain_range.maximum : Modes.gain);
+        //double gain = (SdrConfig.gain == MODES_DEFAULT_GAIN ? SOAPY.gain_range.maximum : SdrConfig.gain);
+        double gain = (SdrConfig.gain == MODES_MAX_GAIN ? SOAPY.gain_range.maximum : SdrConfig.gain);
         if (SoapySDRDevice_setGain(SOAPY.dev, SOAPY_SDR_RX, SOAPY.channel, gain) < 0) {
             fprintf(stderr, "soapy: setGain(%.1fdB) failed\n", gain);
             goto error;
@@ -413,7 +413,7 @@ bool soapyOpen(void)
 
     SOAPY.converter = init_converter(INPUT_SC16,
                                      Modes.sample_rate,
-                                     Modes.dc_filter,
+                                     SdrConfig.dc_filter,
                                      &SOAPY.converter_state);
     if (!SOAPY.converter) {
         fprintf(stderr, "soapy: can't initialize sample converter\n");
@@ -458,7 +458,7 @@ void soapyRun()
 
     uint8_t* buf;
 
-    const int buffer_elements = Modes.sdr_buf_samples;
+    const int buffer_elements = SdrConfig.sdr_buf_samples;
     buf = malloc(buffer_elements * 4);
 
 
@@ -492,16 +492,16 @@ void soapyRun()
 
         slen = (uint32_t) samples_read;
 
-        if (slen != Modes.sdr_buf_samples) {
+        if (slen != SdrConfig.sdr_buf_samples) {
             static int64_t antiSpam;
             if (mstime() > antiSpam) {
                 antiSpam = mstime() + 10 * SECONDS;
                 fprintf(stderr, "weirdness: soapysdr gave us a block with an unusual size (got %u samples, expected %u samples), suppressing this message for 10 seconds\n",
-                        (unsigned) slen, (unsigned) Modes.sdr_buf_samples);
+                        (unsigned) slen, (unsigned) SdrConfig.sdr_buf_samples);
             }
-            if (slen > Modes.sdr_buf_samples) {
+            if (slen > SdrConfig.sdr_buf_samples) {
                 // wat?! Discard the start.
-                unsigned discard = slen - Modes.sdr_buf_samples;
+                unsigned discard = slen - SdrConfig.sdr_buf_samples;
                 outbuf->dropped += discard;
                 buf += discard * 2;
                 slen -= discard * 2;

@@ -112,14 +112,14 @@ bool plutosdrOpen()
     iio_channel_attr_write_longlong(phy_chn, "rf_bandwidth", (long long)1750000);
     iio_channel_attr_write_longlong(phy_chn, "sampling_frequency", (long long)Modes.sample_rate);
 
-    if (Modes.gain == MODES_AUTO_GAIN) {
+    if (SdrConfig.gain == MODES_AUTO_GAIN) {
         iio_channel_attr_write(phy_chn, "gain_control_mode", "slow_attack");
     } else {
         // We use 10th of dB here, max is 77dB up to 1300MHz
-        if (Modes.gain > 770)
-            Modes.gain = 770;
+        if (SdrConfig.gain > 770)
+            SdrConfig.gain = 770;
         iio_channel_attr_write(phy_chn, "gain_control_mode", "manual");
-        iio_channel_attr_write_longlong(phy_chn, "hardwaregain", Modes.gain / 10);
+        iio_channel_attr_write_longlong(phy_chn, "hardwaregain", SdrConfig.gain / 10);
     }
 
     iio_channel_attr_write_bool(
@@ -128,7 +128,7 @@ bool plutosdrOpen()
 
     iio_channel_attr_write_longlong(
             iio_device_find_channel(iio_context_find_device(PLUTOSDR.ctx, "ad9361-phy"), "altvoltage0", true)
-            , "frequency", (long long)Modes.freq); // Set RX LO frequency
+            , "frequency", (long long)SdrConfig.freq); // Set RX LO frequency
 
     PLUTOSDR.rx0_i = iio_device_find_channel(PLUTOSDR.dev, "voltage0", false);
     if (!PLUTOSDR.rx0_i)
@@ -143,13 +143,13 @@ bool plutosdrOpen()
     iio_channel_enable(PLUTOSDR.rx0_i);
     iio_channel_enable(PLUTOSDR.rx0_q);
 
-    PLUTOSDR.rxbuf = iio_device_create_buffer(PLUTOSDR.dev, Modes.sdr_buf_samples, false);
+    PLUTOSDR.rxbuf = iio_device_create_buffer(PLUTOSDR.dev, SdrConfig.sdr_buf_samples, false);
 
     if (!PLUTOSDR.rxbuf) {
         perror("plutosdr: Could not create RX buffer");
     }
 
-    if (!(PLUTOSDR.readbuf = cmalloc(Modes.sdr_buf_size * 4))) {
+    if (!(PLUTOSDR.readbuf = cmalloc(SdrConfig.sdr_buf_size * 4))) {
         fprintf(stderr, "plutosdr: Failed to allocate read buffer\n");
         plutosdrClose();
         return false;
@@ -157,7 +157,7 @@ bool plutosdrOpen()
 
     PLUTOSDR.converter = init_converter(INPUT_SC16,
             Modes.sample_rate,
-            Modes.dc_filter,
+            SdrConfig.dc_filter,
             &PLUTOSDR.converter_state);
     if (!PLUTOSDR.converter) {
         fprintf(stderr, "plutosdr: Can't initialize sample converter\n");
@@ -189,16 +189,16 @@ static void plutosdrCallback(int16_t *buf, uint32_t len) {
     lastbuf = &Modes.mag_buffers[(Modes.first_free_buffer + MODES_MAG_BUFFERS - 1) % MODES_MAG_BUFFERS];
     free_bufs = (Modes.first_filled_buffer - next_free_buffer + MODES_MAG_BUFFERS) % MODES_MAG_BUFFERS;
 
-    if (len != Modes.sdr_buf_size) {
+    if (len != SdrConfig.sdr_buf_size) {
         static int64_t antiSpam;
         if (mstime() > antiSpam) {
             antiSpam = mstime() + 10 * SECONDS;
             fprintf(stderr, "weirdness: plutosdr gave us a block with an unusual size (got %u bytes, expected %u bytes), suppressing this message for 10 seconds\n",
-                    (unsigned) len, (unsigned) Modes.sdr_buf_size);
+                    (unsigned) len, (unsigned) SdrConfig.sdr_buf_size);
         }
 
-        if (len > Modes.sdr_buf_size) {
-            unsigned discard = (len - Modes.sdr_buf_size + 1) / 2;
+        if (len > SdrConfig.sdr_buf_size) {
+            unsigned discard = (len - SdrConfig.sdr_buf_size + 1) / 2;
             outbuf->dropped += discard;
             buf += discard * 2;
             len -= discard * 2;

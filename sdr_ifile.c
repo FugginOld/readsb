@@ -83,7 +83,7 @@ bool ifileHandleOption(int key, char *arg) {
     switch (key) {
         case OptIfileName:
             ifile.filename = strdup(arg);
-            Modes.sdr_type = SDR_IFILE;
+            SdrConfig.sdr_type = SDR_IFILE;
             break;
         case OptIfileFormat:
             if (!strcasecmp(arg, "uc8")) {
@@ -148,7 +148,7 @@ bool ifileOpen(void) {
             return false;
     }
 
-    if (!(ifile.readbuf = cmalloc(Modes.sdr_buf_samples * ifile.bytes_per_sample))) {
+    if (!(ifile.readbuf = cmalloc(SdrConfig.sdr_buf_samples * ifile.bytes_per_sample))) {
         fprintf(stderr, "ifile: failed to allocate read buffer\n");
         ifileClose();
         return false;
@@ -156,7 +156,7 @@ bool ifileOpen(void) {
 
     ifile.converter = init_converter(ifile.input_format,
             Modes.sample_rate,
-            Modes.dc_filter,
+            SdrConfig.dc_filter,
             &ifile.converter_state);
     if (!ifile.converter) {
         fprintf(stderr, "ifile: can't initialize sample converter\n");
@@ -219,7 +219,7 @@ void ifileRun() {
 
         //fprintf(stderr, "sysTimestamp %.3f\n", outbuf->sysTimestamp / 1000.0);
 
-        toread = Modes.sdr_buf_samples * ifile.bytes_per_sample;
+        toread = SdrConfig.sdr_buf_samples * ifile.bytes_per_sample;
         r = ifile.readbuf;
         while (toread) {
             nread = read(ifile.fd, r, toread);
@@ -235,7 +235,7 @@ void ifileRun() {
             toread -= nread;
         }
 
-        slen = outbuf->length = Modes.sdr_buf_samples - toread / ifile.bytes_per_sample;
+        slen = outbuf->length = SdrConfig.sdr_buf_samples - toread / ifile.bytes_per_sample;
         sampleCounter += slen;
 
         // Convert the new data

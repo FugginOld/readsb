@@ -227,6 +227,7 @@ struct aircraft *aircraftGet(uint32_t addr) {
 void freeAircraft(struct aircraft *a) {
     if (Modes.quickFree) {
         traceCleanupNoUnlink(a);
+        traceHistoryDestroy(a->traceHistory);
         deallocAircraft(a);
         return;
     }
@@ -240,6 +241,7 @@ void freeAircraft(struct aircraft *a) {
         ca_remove(&Modes.aircraftActive, a);
     }
     traceCleanup(a);
+    traceHistoryDestroy(a->traceHistory);
 
     memset(a, 0x0, sizeof (struct aircraft));
     deallocAircraft(a);
@@ -261,6 +263,7 @@ struct aircraft *aircraftCreate(uint32_t addr) {
     memset(a, 0, sizeof (struct aircraft));
 
     // Now initialise things that should not be 0/NULL to their defaults
+    a->traceHistory = traceHistoryCreate();
     a->addr = addr;
     a->addrtype = ADDR_UNKNOWN;
 
