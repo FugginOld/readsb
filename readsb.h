@@ -869,7 +869,7 @@ struct _Modes
     zstd_fw_t *dump_fw;
     int64_t dump_next_ts; // last timestamp sent
     int32_t dump_interval;
-    int32_t dump_beast_index;
+    int64_t dump_beast_index;
     uint64_t dump_lastReceiverId;
     int8_t dump_compressionLevel;
     int8_t beast_dated_dirs; // --devel=beast_dated_dirs: organise captures into YYYY-MM-DD subdirs

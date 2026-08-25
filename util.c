@@ -1067,7 +1067,7 @@ void dump_beast_check(int64_t now) {
     if (!Modes.dump_fw) {
         return;
     }
-    int32_t index = now / (Modes.dump_interval * SECONDS);
+    int64_t index = now / (Modes.dump_interval * SECONDS);
 
     if (Modes.dump_beast_index == index) {
         return;
