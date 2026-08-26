@@ -296,6 +296,9 @@ static void update_range_histogram(struct aircraft *a, int64_t now) {
     struct distCoords *current = &(Modes.rangeDirs[rangeDirIval][rangeDirDirection]);
 
 
+    // hard-coded 2 on purpose: posReliable() returns 1 unconditionally for
+    // MLAT/JAERO/INDIRECT, which would bypass this range guard entirely.
+    // substituting it here was reverted once already: 98e86ab.
     // if the position isn't proper reliable, only allow it if the range in that direction is increased by less than 25 nmi compared to the maximum of the last 24h
     if (range > current->distance && (a->pos_reliable_odd < 2 || a->pos_reliable_even < 2)) {
         float directionMax = 0;
